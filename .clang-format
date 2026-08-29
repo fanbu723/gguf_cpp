@@ -1,0 +1,36 @@
+# clang-format 配置文件
+# 生效范围：本目录及其所有子目录（gguf_parser/ 下的 .cpp/.hpp）
+# 可在命令行验证：clang-format -style=file --dry-run src/main.cpp
+
+BasedOnStyle: LLVM
+Language: Cpp
+
+# ---------- 基础布局 ----------
+IndentWidth: 4          # 缩进 4 空格
+TabWidth: 4
+UseTab: Never           # 不用 Tab
+ColumnLimit: 100        # 单行上限 100 列
+
+# ---------- 大括号：跟随语句（K&R，贴合现有代码） ----------
+BreakBeforeBraces: Attach
+
+# ---------- 指针 / 引用靠变量名 ----------
+DerivePointerAlignment: false
+PointerAlignment: Right
+
+# ---------- 语句控制 ----------
+AllowShortIfStatementsOnASingleLine: false   # if 语句体换行，不压成单行
+AllowShortLoopsOnASingleLine: false          # 循环体同理
+AllowShortFunctionsOnASingleLine: Empty      # 空函数可单行，其余展开
+AllowShortCaseLabelsOnASingleLine: false
+
+# ---------- 头文件 ----------
+SortIncludes: true      # 自动排序 #include（C++ 标准在前，自定义在后）
+
+# ---------- 命名空间 ----------
+NamespaceIndentation: None          # 命名空间内不额外缩进
+CompactNamespaces: false
+
+# ---------- 其他 ----------
+InsertTrailingCommas: None
+DeriveLineEnding: true
