@@ -29,7 +29,7 @@
 | ③ | Tokenizer（byte-level BPE） | ✅ |
 | ④ | 模型权重加载（按名索引 / 配置 / 逐层组装） | ✅ |
 | ⑤ | Transformer 计算（算子 → 单层前向 → 全模型） | ✅ |
-| ⑥ | 生成引擎（Sampler + 自回归 + Chat） | 🔄 进行中（Sampler/生成循环 ✅） |
+| ⑥ | 生成引擎（Sampler + 自回归 + Chat） | ✅ |
 
 ---
 
@@ -54,6 +54,7 @@
 | 全模型前向（24 层混合 + output_norm + 共享 embedding logits） | ✅（阶段⑤ 第 4 步） |
 | 采样器（temperature / top-k / top-p / greedy） | ✅（阶段⑥ 第 1 步） |
 | 自回归生成循环（预填充 + 逐 token 解码） | ✅（阶段⑥ 第 2 步） |
+| Chat 多轮对话（Qwen 风格模板 + 历史管理） | ✅（阶段⑥ 第 3 步） |
 
 运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子、层前向（Attention + SSM）与全模型前向演示。
 
@@ -69,7 +70,10 @@
 | **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | ✅ 全部完成（按名索引 / 配置 / 逐层组装） | embedding / norm / attn / ffn / ssm |
 | **⑤ Transformer 计算** | ✅ 全部完成（算子 / Attention / SSM / 全模型前向） | 矩阵乘、前向传播 |
-| **⑥ 生成引擎** 🔄 进行中 | Sampler ✅、生成循环 ✅；待：Chat 多轮对话 | 预填充 + 解码 |
+| **⑥ 生成引擎** | ✅ 全部完成（Sampler / 生成循环 / Chat） | 预填充 + 解码 |
+
+> 🎉 六阶段全部完成：完整的 GGUF 加载 → 解析 → 分词 → 权重 → Transformer → 生成链路已打通。
+> 由于当前模型文件 FFN 权重含 0.3% NaN，端到端输出为 NaN；换干净的 GGUF 后即可实际生成。
 
 ### 阶段 ②：张量数据访问 ✅
 
@@ -145,9 +149,12 @@
 - [x] 单元测试 `test_generate`（2 层假模型：生成数量 / 确定性 / eos 停止）
 - [x] 真实模型演示：检测到 logits 全 NaN 时安全提示（不崩溃），建议换干净 GGUF
 
-**待做（下一步）**
+**第 3 步：Chat 多轮对话 ✅**
 
-- [ ] Chat 多轮对话（状态管理 + 对话模板）
+- [x] `GGMLChat`：多轮对话封装（Qwen 风格模板 + 历史文本管理）
+- [x] 每轮拼接历史 → 编码 → 生成 → 追加回复；`clear()` 重置会话
+- [x] 单元测试 `test_chat`（假模型 + 假分词器：回复有效 / 多轮累积 / clear）
+- [x] 真实模型演示：Chat 初始化正常（模型 NaN 时提示换干净 GGUF）
 ---
 
 ## 关键认知与踩坑
@@ -199,7 +206,8 @@ gguf_cpp/
 │   ├── GGMLSSM.hpp             # SSM 混合层（Gated Delta Net）前向
 │   ├── GGMLForward.hpp         # 全模型前向（多层 + logits）
 │   ├── GGMLSampler.hpp         # 采样器（temp / top-k / top-p / greedy）
-│   └── GGMLGenerate.hpp        # 自回归生成循环
+│   ├── GGMLGenerate.hpp        # 自回归生成循环
+│   └── GGMLChat.hpp            # 多轮对话封装
 ├── src/
 │   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子 + 生成
 │   ├── core/
@@ -219,7 +227,8 @@ gguf_cpp/
 │   │   ├── GGMLSSM.cpp         # SSM 层（delta net）实现
 │   │   ├── GGMLForward.cpp     # 全模型前向实现
 │   │   ├── GGMLSampler.cpp     # 采样器实现
-│   │   └── GGMLGenerate.cpp    # 生成循环实现
+│   │   ├── GGMLGenerate.cpp    # 生成循环实现
+│   │   └── GGMLChat.cpp        # 多轮对话实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
@@ -232,7 +241,8 @@ gguf_cpp/
 │       ├── test_ssm.cpp          # SSM 层前向单元测试
 │       ├── test_forward.cpp      # 全模型前向单元测试
 │       ├── test_sampler.cpp      # 采样器单元测试
-│       └── test_generate.cpp     # 生成循环单元测试
+│       ├── test_generate.cpp     # 生成循环单元测试
+│       └── test_chat.cpp         # 多轮对话单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
@@ -251,7 +261,7 @@ cmake --build build
 # 运行（加载模型，打印元数据/张量表/类型验证/mmap/反量化/分词/权重/算子/层前向）
 ./build/main
 
-# 运行全部测试（CTest，当前 12 个：解析/类型/反量化/分词/真实分词/权重/算子/层前向/SSM/全模型/采样/生成）
+# 运行全部测试（CTest，当前 13 个：解析/类型/反量化/分词/真实分词/权重/算子/层前向/SSM/全模型/采样/生成/Chat）
 ctest --test-dir build --output-on-failure
 ```
 

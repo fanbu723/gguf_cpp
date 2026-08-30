@@ -34,7 +34,8 @@ add_library(MyLib STATIC
     src/model/GGMLSSM.cpp
     src/model/GGMLForward.cpp
     src/model/GGMLSampler.cpp
-    src/model/GGMLGenerate.cpp)
+    src/model/GGMLGenerate.cpp
+    src/model/GGMLChat.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
@@ -112,6 +113,12 @@ if(BUILD_TESTING)
         )
     target_link_libraries(test_generate PRIVATE MyLib)
     add_test(NAME generate COMMAND test_generate)
+
+    add_executable(test_chat
+        src/test/test_chat.cpp
+        )
+    target_link_libraries(test_chat PRIVATE MyLib)
+    add_test(NAME chat COMMAND test_chat)
 
     add_executable(test_tokenizer_ggml
         src/test/test_tokenizer_ggml.cpp

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "GGMLDequantize.hpp"
+#include "GGMLChat.hpp"
 #include "GGMLForward.hpp"
 #include "GGMLGenerate.hpp"
 #include "GGMLNorm.hpp"
@@ -448,6 +449,22 @@ int main() {
                     } else {
                         std::cout << "  prompt 编码为空" << std::endl;
                     }
+                } else {
+                    std::cout << "  tokenizer 构建失败" << std::endl;
+                }
+            }
+
+            // ---- 阶段⑥：Chat 多轮对话演示（真实模型）----
+            std::cout << "\n  --- 阶段⑥：Chat 多轮对话（真实模型）---" << std::endl;
+            {
+                GGUFTokenizer tok;
+                if (tok.build_from(model)) {
+                    GGMLChat chat;
+                    chat.init(weights, tok, GGMLSampleMode::TOP_K_P, 42, 32);
+                    std::cout << "  GGMLChat 已初始化（Qwen 风格多轮对话封装）" << std::endl;
+                    std::cout << "  ⚠️ 真实模型 logits 全 NaN（FFN 权重含 NaN），无法实际"
+                                 "对话；建议换干净的 Qwen3.5 GGUF 后体验完整生成链路"
+                              << std::endl;
                 } else {
                     std::cout << "  tokenizer 构建失败" << std::endl;
                 }
