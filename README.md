@@ -29,7 +29,7 @@
 | ③ | Tokenizer（byte-level BPE） | ✅ |
 | ④ | 模型权重加载（按名索引 / 配置 / 逐层组装） | ✅ |
 | ⑤ | Transformer 计算（算子 → 单层前向 → 全模型） | ✅ |
-| ⑥ | 生成引擎（Sampler + 自回归 + Chat） | ⬜ **下一步** |
+| ⑥ | 生成引擎（Sampler + 自回归 + Chat） | 🔄 进行中（Sampler/生成循环 ✅） |
 
 ---
 
@@ -52,6 +52,8 @@
 | 纯 Attention 层前向（Q+gate 联合投影 / GQA / KV cache / 残差） | ✅（阶段⑤ 第 2 步） |
 | SSM 混合层前向（Gated Delta Net：conv1d / 状态递推 / gated norm） | ✅（阶段⑤ 第 3 步） |
 | 全模型前向（24 层混合 + output_norm + 共享 embedding logits） | ✅（阶段⑤ 第 4 步） |
+| 采样器（temperature / top-k / top-p / greedy） | ✅（阶段⑥ 第 1 步） |
+| 自回归生成循环（预填充 + 逐 token 解码） | ✅（阶段⑥ 第 2 步） |
 
 运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子、层前向（Attention + SSM）与全模型前向演示。
 
@@ -67,7 +69,7 @@
 | **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | ✅ 全部完成（按名索引 / 配置 / 逐层组装） | embedding / norm / attn / ffn / ssm |
 | **⑤ Transformer 计算** | ✅ 全部完成（算子 / Attention / SSM / 全模型前向） | 矩阵乘、前向传播 |
-| **⑥ 生成引擎** ⬅ **下一步** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
+| **⑥ 生成引擎** 🔄 进行中 | Sampler ✅、生成循环 ✅；待：Chat 多轮对话 | 预填充 + 解码 |
 
 ### 阶段 ②：张量数据访问 ✅
 
@@ -128,11 +130,24 @@
 - [x] 单元测试 `test_forward`（2 层假模型：logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
 - [x] 真实模型：完整 24 层前向 → logits[248320]（全 NaN 系模型权重本身含 NaN）
 
-### 阶段 ⑥：生成引擎 ⬅ 下一步
+### 阶段 ⑥：生成引擎 🔄 进行中
 
-- [ ] Sampler（temperature / top-k / top-p）
-- [ ] 自回归生成循环（预填充 + 逐 token 解码）
-- [ ] Chat 多轮对话
+**第 1 步：采样器 ✅**
+
+- [x] `GGMLSampler`：GREEDY / TOP_K / TOP_P / TOP_K_P（temperature 缩放 + 数值稳定 softmax）
+- [x] top-k（保留概率前 k）+ top-p（nucleus 累计），`temperature≤0` 退化为贪心
+- [x] 种子确定性：相同 seed → 相同采样序列（可复现）
+- [x] 单元测试 `test_sampler`（合成 logits 验证各模式与边界）
+
+**第 2 步：自回归生成循环 ✅**
+
+- [x] `GGMLGenerate`：预填充（逐 token 前向更新状态）→ 循环 forward+sample → eos 提前停止
+- [x] 单元测试 `test_generate`（2 层假模型：生成数量 / 确定性 / eos 停止）
+- [x] 真实模型演示：检测到 logits 全 NaN 时安全提示（不崩溃），建议换干净 GGUF
+
+**待做（下一步）**
+
+- [ ] Chat 多轮对话（状态管理 + 对话模板）
 ---
 
 ## 关键认知与踩坑
@@ -182,9 +197,11 @@ gguf_cpp/
 │   └── GGMLAttention.hpp       # KV cache + GQA 注意力
 │   ├── GGMLTransformer.hpp     # 纯 Attention 层完整前向
 │   ├── GGMLSSM.hpp             # SSM 混合层（Gated Delta Net）前向
-│   └── GGMLForward.hpp         # 全模型前向（多层 + logits）
+│   ├── GGMLForward.hpp         # 全模型前向（多层 + logits）
+│   ├── GGMLSampler.hpp         # 采样器（temp / top-k / top-p / greedy）
+│   └── GGMLGenerate.hpp        # 自回归生成循环
 ├── src/
-│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子
+│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子 + 生成
 │   ├── core/
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
@@ -192,7 +209,7 @@ gguf_cpp/
 │   │   ├── GGMLDequantize.cpp  # 反量化实现
 │   │   ├── GGUFTokenizer.cpp   # 分词器实现
 │   │   └── GGUFModelWeights.cpp # 权重加载实现
-│   ├── model/                  # 阶段⑤ 实现
+│   ├── model/                  # 阶段⑤⑥ 实现
 │   │   ├── GGMLOps.cpp         # 基础算子实现
 │   │   ├── GGMLNorm.cpp        # RMSNorm 实现
 │   │   ├── GGMLFFN.cpp         # SwiGLU 实现
@@ -200,7 +217,9 @@ gguf_cpp/
 │   │   ├── GGMLAttention.cpp   # Attention + KV cache 实现
 │   │   ├── GGMLTransformer.cpp # 层前向实现
 │   │   ├── GGMLSSM.cpp         # SSM 层（delta net）实现
-│   │   └── GGMLForward.cpp     # 全模型前向实现
+│   │   ├── GGMLForward.cpp     # 全模型前向实现
+│   │   ├── GGMLSampler.cpp     # 采样器实现
+│   │   └── GGMLGenerate.cpp    # 生成循环实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
@@ -211,7 +230,9 @@ gguf_cpp/
 │       ├── test_model_ops.cpp    # 基础算子单元测试
 │       ├── test_transformer.cpp  # Attention 层前向单元测试
 │       ├── test_ssm.cpp          # SSM 层前向单元测试
-│       └── test_forward.cpp      # 全模型前向单元测试
+│       ├── test_forward.cpp      # 全模型前向单元测试
+│       ├── test_sampler.cpp      # 采样器单元测试
+│       └── test_generate.cpp     # 生成循环单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
@@ -230,7 +251,7 @@ cmake --build build
 # 运行（加载模型，打印元数据/张量表/类型验证/mmap/反量化/分词/权重/算子/层前向）
 ./build/main
 
-# 运行全部测试（CTest，当前 10 个：解析/类型/反量化/分词/真实分词/权重/算子/层前向/SSM/全模型）
+# 运行全部测试（CTest，当前 12 个：解析/类型/反量化/分词/真实分词/权重/算子/层前向/SSM/全模型/采样/生成）
 ctest --test-dir build --output-on-failure
 ```
 
@@ -277,6 +298,7 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ Attention 层前向单测 5 项全过（结构 / 确定性 / KV 递增 / RoPE 位置影响）
 - ✅ SSM 层单测：delta net 手算一致 + 层结构 / 确定性 / 状态累积 / conv 推进
 - ✅ 全模型前向单测 6 项（logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
+- ✅ 生成引擎单测：sampler 各模式 + 生成循环（数量 / 确定性 / eos 停止）
 - ✅ 真实模型完整 24 层前向 → logits[248320]（全 NaN 系模型权重本身含 NaN）
 - ✅ 真实模型 `blk.3`（纯 Attention 层）与 `blk.0`（SSM 层）前向均跑通，无越界
 - ⚠️ 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN，导致真实前向输出 NaN（属模型文件本身数据，非实现 bug）

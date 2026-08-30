@@ -10,6 +10,7 @@
 
 #include "GGMLDequantize.hpp"
 #include "GGMLForward.hpp"
+#include "GGMLGenerate.hpp"
 #include "GGMLNorm.hpp"
 #include "GGMLRope.hpp"
 #include "GGMLSSM.hpp"
@@ -407,6 +408,49 @@ int main() {
                           << (fin ? "✅"
                                   : "❌（NaN " + std::to_string(nan_cnt) + " 个，模型权重含 NaN）")
                           << std::endl;
+            }
+
+            // ---- 阶段⑥：生成引擎演示（真实模型）----
+            std::cout << "\n  --- 阶段⑥：生成引擎（真实模型）---" << std::endl;
+            {
+                GGUFTokenizer tok;
+                if (tok.build_from(model)) {
+                    const std::string prompt_text = "Hello";
+                    const auto prompt_tokens = tok.encode(prompt_text);
+                    if (!prompt_tokens.empty()) {
+                        GGMLModelState st;
+                        st.init(weights, 32);
+                        // 先探测一次 logits：模型含 NaN 则无法生成（避免采样崩溃）
+                        std::vector<float> probe;
+                        GGMLForward(weights, st, prompt_tokens[0], 0, probe);
+                        bool nan = false;
+                        for (float v : probe)
+                            if (!std::isfinite(v)) {
+                                nan = true;
+                                break;
+                            }
+                        if (nan) {
+                            std::cout << "  ❌ 模型 logits 含 NaN（模型权重本身含 NaN），"
+                                         "无法生成有效文本；建议换干净的 Qwen3.5 GGUF"
+                                      << std::endl;
+                        } else {
+                            GGMLSampler sampler;
+                            sampler.mode = GGMLSampleMode::TOP_K_P;
+                            const auto gen =
+                                GGMLGenerate(weights, st, sampler, prompt_tokens, 16, tok.eos_id);
+                            std::string text = prompt_text;
+                            for (int t : gen)
+                                text += tok.decode(t);
+                            std::cout << "  prompt: '" << prompt_text << "'" << std::endl;
+                            std::cout << "  生成  : '" << text << "'  （" << gen.size()
+                                      << " 个新 token）" << std::endl;
+                        }
+                    } else {
+                        std::cout << "  prompt 编码为空" << std::endl;
+                    }
+                } else {
+                    std::cout << "  tokenizer 构建失败" << std::endl;
+                }
             }
         } else {
             std::cerr << "  ❌ 权重索引构建失败" << std::endl;

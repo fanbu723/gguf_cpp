@@ -32,7 +32,9 @@ add_library(MyLib STATIC
     src/model/GGMLAttention.cpp
     src/model/GGMLTransformer.cpp
     src/model/GGMLSSM.cpp
-    src/model/GGMLForward.cpp)
+    src/model/GGMLForward.cpp
+    src/model/GGMLSampler.cpp
+    src/model/GGMLGenerate.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
@@ -98,6 +100,18 @@ if(BUILD_TESTING)
         )
     target_link_libraries(test_forward PRIVATE MyLib)
     add_test(NAME forward COMMAND test_forward)
+
+    add_executable(test_sampler
+        src/test/test_sampler.cpp
+        )
+    target_link_libraries(test_sampler PRIVATE MyLib)
+    add_test(NAME sampler COMMAND test_sampler)
+
+    add_executable(test_generate
+        src/test/test_generate.cpp
+        )
+    target_link_libraries(test_generate PRIVATE MyLib)
+    add_test(NAME generate COMMAND test_generate)
 
     add_executable(test_tokenizer_ggml
         src/test/test_tokenizer_ggml.cpp
