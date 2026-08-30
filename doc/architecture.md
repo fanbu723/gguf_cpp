@@ -1,4 +1,4 @@
-# gguf_parser — 极简 GGUF 推理引擎 · 项目架构
+# gguf_cpp — 极简 GGUF 推理引擎 · 项目架构
 
 > 设计目标：在标准 GGUF 格式下直接运行 LLaMA / Qwen 等模型的**微型推理引擎**。
 > 核心代码保持在"一眼能看完"的范围内，零外部依赖（纯 C++20 + 标准库）。
@@ -113,12 +113,12 @@ flowchart LR
 ## 四、目录结构
 
 ```
-gguf_parser/
+gguf_cpp/
 ├── CMakeLists.txt                # 顶层构建配置
 ├── CMakePresets.json             # CMake 预设
 ├── cmake/
 │   └── CompileWarnings.cmake     # 编译警告配置
-├── include/gguf_parser/          # 库公共头文件（按模块分层）
+├── include/gguf_cpp/          # 库公共头文件（按模块分层）
 │   ├── core/                     # 基础层：文件格式与加载
 │   │   ├── gguf.hpp              #   GGUF 格式结构 + 解析接口
 │   │   ├── mmap.hpp              #   mmap 内存映射 RAII
