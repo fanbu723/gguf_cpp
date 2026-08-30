@@ -20,31 +20,59 @@
 
 #include "GGUFLoader.hpp"
 
+/**
+ * @brief 分词器：字节级 BPE 词汇表（token id ↔ 文本 互转）
+ *
+ * 从 GGUF 的 tokenizer.ggml.* 元数据构建；encode 用 gpt2 风格的 byte-level BPE
+ * （字节编码 → 按空格切词 → 贪心 merge），decode 做逆变换（字节还原）。
+ */
 struct GGUFTokenizer {
     // ---- 词汇表（来自 tokenizer.ggml.*）----
-    std::vector<std::string> tokens; // id → token 文本（字节编码形式）
-    std::vector<float> scores;       // id → 分数（可空）
+    std::vector<std::string> tokens;       // id → token 文本（字节编码形式）
+    std::vector<float> scores;             // id → 分数（可空）
     std::vector<std::int32_t> token_types; // id → 类型（1=正常, 3=控制, 6=字节级）
     std::vector<std::pair<std::string, std::string>> merges; // BPE merges（可空）
-    std::string model_type;          // "gpt2" / "qwen2" ...
+    std::string model_type;                                  // "gpt2" / "qwen2" ...
     std::int32_t bos_id = -1, eos_id = -1, pad_id = -1, unk_id = -1;
 
-    // 从解析好的 GGUFModel 元数据构建词汇表
+    /**
+     * @brief 从解析好的 GGUFModel 元数据构建词汇表
+     * @param model 解析出的 GGUF 模型（含 tokenizer.ggml.* 元数据）
+     * @return 成功返回 true；缺少 token 列表返回 false
+     */
     bool build_from(const GGUFModel &model);
 
-    // 由已填充的 tokens/merges 重建查找表（build_from 内部 / 单元测试用）
+    /**
+     * @brief 由已填充的 tokens/merges 重建查找表（build_from 内部 / 单元测试用）
+     */
     void rebuild_index();
 
-    // token id → 文本。
-    // 特殊 token（控制/未知/用户定义）原样输出；普通与字节级 token 做字节还原。
-    // 注意：字节级 BPE 中空格等是以 "Ġ"(U+0120) 形式存于词表（可能标记为 NORMAL 而非 BYTE），
-    //       因此 decode 按"逐码点字节还原"处理，而不是只判断 token_type==6。
+    /**
+     * @brief token id → 文本
+     * @param id token id
+     * @return 对应文本；特殊 token（控制/未知/用户定义）原样输出，
+     *         普通与字节级 token 做字节还原；id 越界返回空串
+     *
+     * 注意：字节级 BPE 中空格等是以 "Ġ"(U+0120) 形式存于词表（可能标记为
+     *       NORMAL 而非 BYTE），因此 decode 按"逐码点字节还原"处理，
+     *       而不是只判断 token_type==6。
+     */
     std::string decode(std::int32_t id) const;
 
-    // 文本 → token ids（byte-level BPE）
+    /**
+     * @brief 文本 → token ids（byte-level BPE）
+     * @param text 待分词的原始文本（任意 UTF-8）
+     * @return 分词结果的 token id 列表
+     */
     std::vector<std::int32_t> encode(const std::string &text) const;
 
-    std::size_t size() const { return tokens.size(); }
+    /**
+     * @brief 获取词汇表大小
+     * @return token 总数
+     */
+    std::size_t size() const {
+        return tokens.size();
+    }
 
   private:
     std::unordered_map<std::string, std::int32_t> token_to_id_; // token 文本 → id

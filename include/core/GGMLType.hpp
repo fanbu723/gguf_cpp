@@ -55,14 +55,31 @@ enum class GGMLType : std::uint32_t {
     IQ2_M = 38,
 };
 
-// 类型编号 → 名称（"F32" / "Q4_0" / ...；未知返回 "?"）
+/**
+ * @brief GGML 类型编号 → 类型名称
+ * @param type GGML 类型编号
+ * @return 类型名称（"F32" / "Q4_0" / ...；未知返回 "?"）
+ */
 const char *GGMLTypeName(std::uint32_t type);
 
-// 每个 block 的元素数（非量化类型为 1；未知返回 1）
+/**
+ * @brief 查询每个 block 的元素数
+ * @param type GGML 类型编号
+ * @return 非量化类型为 1；未知返回 1
+ */
 std::uint32_t GGMLBlockSize(std::uint32_t type);
 
-// 每个 block 的字节数（F32=4、BF16=2、Q4_0=18...；未知返回 0）
+/**
+ * @brief 查询每个 block 的字节数
+ * @param type GGML 类型编号
+ * @return F32=4、BF16=2、Q4_0=18...；未知返回 0
+ */
 std::uint32_t GGMLTypeSize(std::uint32_t type);
 
-// 计算元素数为 nelements 的张量所占的总字节数（按整 block 向上取整）
+/**
+ * @brief 计算张量总字节数（按整 block 向上取整）
+ * @param type GGML 类型编号
+ * @param nelements 元素总数
+ * @return 张量占用的总字节数；未知类型返回 0
+ */
 std::uint64_t GGMLBytes(std::uint32_t type, std::uint64_t nelements);

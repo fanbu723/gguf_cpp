@@ -77,6 +77,9 @@
 
 namespace fs = std::filesystem;
 
+/**
+ * @brief GGUF 文件头（固定 24 字节，pack 1 字节对齐，见文件顶部①）
+ */
 // 强制 1 字节对齐，防止编译器在结构体内部插入填充字节
 #pragma pack(push, 1)
 struct GGUFHeader {
@@ -94,7 +97,9 @@ static_assert(sizeof(GGUFHeader) == 24, "GGUFHeader size must be 24 bytes");
 // 元数据键值对列表（Metadata KV Pairs）
 // ============================================================================
 
-// 值类型枚举（GGUFValueType），对应规范第 2.2 节
+/**
+ * @brief 元数据值类型枚举（GGUFValueType），对应 GGUF 规范第 2.2 节
+ */
 enum class GGUFValueType : std::uint32_t {
     UINT8 = 0,
     INT8 = 1,
@@ -130,13 +135,17 @@ using MetadataValue = std::variant<std::uint8_t,                // UINT8
                                    double                       // FLOAT64
                                    >;
 
-// ARRAY 值：元素类型 + 元素列表（每个元素仍是 MetadataValue，可继续嵌套 ARRAY）
+/**
+ * @brief ARRAY 值：元素类型 + 元素列表（每个元素仍是 MetadataValue，可继续嵌套 ARRAY）
+ */
 struct ArrayValue {
     GGUFValueType element_type = GGUFValueType::UINT8; // 元素类型
     std::vector<MetadataValue> elements;               // 元素列表
 };
 
-// 元数据键值对（KV 列表中的一项）
+/**
+ * @brief 元数据键值对（KV 列表中的一项）
+ */
 struct GGUFMetadataKV {
     std::string key;                                 // 键名
     GGUFValueType value_type = GGUFValueType::UINT8; // 值类型
@@ -147,6 +156,9 @@ struct GGUFMetadataKV {
 // 张量信息表（Tensor Info Table）
 // ============================================================================
 
+/**
+ * @brief 张量信息表中的一个表项
+ */
 struct GGUFTensorInfo {
     std::string name;                      // 张量名称
     std::uint32_t n_dimensions = 0;        // 维度数量
@@ -167,8 +179,11 @@ struct GGUFTensorInfo {
 // 张量数据区（Tensor Data Region）
 // ============================================================================
 
-// 数据区视图：零拷贝，仅记录指针与大小，不持有数据（约束 C3 延迟加载）
-// RAII：拥有 mmap 资源，析构自动释放；禁拷贝（防双释放）、可移动（转移所有权）
+/**
+ * @brief 张量数据区视图（零拷贝，仅记录指针与大小，不持有数据——延迟加载）
+ *
+ * RAII：拥有 mmap 资源，析构自动释放；禁拷贝（防双释放）、可移动（转移所有权）。
+ */
 struct GGUFTensorData {
     const std::uint8_t *data_ptr = nullptr; // 数据区起始指针（mmap 后指向映射区）
     std::uint64_t data_offset = 0;          // 数据区在文件中的起始偏移
@@ -197,7 +212,9 @@ struct GGUFTensorData {
     void unmap() noexcept;
 };
 
-// 内存模型容器：Header + 元数据列表 + 张量表 + 数据区视图
+/**
+ * @brief 内存模型容器：Header + 元数据列表 + 张量表 + 数据区视图
+ */
 struct GGUFModel {
     GGUFHeader header;                    // 文件头（24 字节）
     std::vector<GGUFMetadataKV> metadata; // 元数据 KV 列表
@@ -209,8 +226,13 @@ struct GGUFModel {
 // 值打印工具（供上层展示元数据）
 // ============================================================================
 
-// 值类型枚举 → 名称（"UINT8" / "ARRAY" ...）
-// 微小查表函数，直接 inline 放头文件，调用处可内联为跳转表
+/**
+ * @brief 值类型枚举 → 名称（"UINT8" / "ARRAY" ...）
+ * @param type 值类型枚举
+ * @return 类型名称字符串；未知类型返回 "?"
+ *
+ * 微小查表函数，直接 inline 放头文件，调用处可内联为跳转表。
+ */
 inline const char *GGUFValueTypeName(GGUFValueType type) {
     switch (type) {
     case GGUFValueType::UINT8:
@@ -243,7 +265,13 @@ inline const char *GGUFValueTypeName(GGUFValueType type) {
     return "?";
 }
 
-// 递归打印一个元数据值（ARRAY 只预览前几个元素，避免刷屏）
+/**
+ * @brief 递归打印一个元数据值（ARRAY 只预览前几个元素，避免刷屏）
+ * @param os 输出流
+ * @param value 要打印的元数据值
+ * @param depth 递归深度（用于缩进对齐）
+ * @param max_items ARRAY 最多预览的元素个数
+ */
 void printMetadataValue(std::ostream &os, const MetadataValue &value, int depth = 0,
                         std::size_t max_items = 3);
 
@@ -266,11 +294,18 @@ class GGUFLoader {
 
     /**
      * @brief 读取一个长度前缀字符串（uint64 长度 + UTF-8 内容）
+     * @param is 输入流（当前位于长度字段处）
+     * @param out 输出参数，接收读到的字符串
+     * @return 成功返回 true，失败返回 false
      */
     static bool read_string(std::istream &is, std::string &out);
 
     /**
      * @brief 按类型递归读取一个元数据值（ARRAY 会递归调用自身）
+     * @param is 输入流（当前位于 value 字段处）
+     * @param type 值类型
+     * @param out 输出参数，接收读到的值
+     * @return 成功返回 true，失败返回 false
      */
     static bool read_value(std::istream &is, GGUFValueType type, MetadataValue &out);
 
@@ -284,34 +319,51 @@ class GGUFLoader {
 
     /**
      * @brief 释放张量数据区映射（munmap），清空 data_ptr
+     * @param model 模型（load 之后调用）
      */
     static void unmap_data(GGUFModel &model);
 
   private:
     /**
      * @brief 验证魔数是否正确
+     * @param magic 待验证的魔数
+     * @return magic == 0x46554747（"GGUF"）返回 true
      */
     static bool validate_magic(uint32_t magic);
 
     /**
      * @brief 从流中读取文件头并校验魔数（load / is_gguf_file 内部共用）
+     * @param is 输入流
+     * @param header 输出参数，接收解析出的文件头
+     * @return 成功返回 true，失败返回 false
      */
     static bool read_header(std::istream &is, GGUFHeader &header);
 
     /**
      * @brief 解析元数据区（metadata_kv_count 个 KV 对）
+     * @param is 输入流
+     * @param count KV 对数量
+     * @param out 输出参数，接收解析出的 KV 列表
+     * @return 成功返回 true，失败返回 false
      */
     static bool load_metadata(std::istream &is, std::uint64_t count,
                               std::vector<GGUFMetadataKV> &out);
 
     /**
      * @brief 解析张量信息表（tensor_count 个表项）
+     * @param is 输入流
+     * @param count 张量数量
+     * @param out 输出参数，接收解析出的张量表
+     * @return 成功返回 true，失败返回 false
      */
     static bool load_tensor_info(std::istream &is, std::uint64_t count,
                                  std::vector<GGUFTensorInfo> &out);
 
     /**
      * @brief 定位张量数据区（延迟加载：只记录偏移与大小，不读取数据）
+     * @param is 输入流（当前位于数据区起始处）
+     * @param data 输出参数，接收数据区视图（offset/size）
+     * @return 成功返回 true，失败返回 false
      */
     static bool load_data_region(std::istream &is, GGUFTensorData &data);
 };
