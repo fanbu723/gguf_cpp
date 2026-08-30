@@ -319,11 +319,13 @@ int main() {
                     // 用 token 0 的 embedding 作为输入（读前 hidden 个元素）
                     std::vector<float> x(static_cast<std::size_t>(hidden));
                     for (int i = 0; i < hidden; ++i)
-                        embd->read_element(static_cast<std::uint64_t>(i), x[static_cast<std::size_t>(i)]);
+                        embd->read_element(static_cast<std::uint64_t>(i),
+                                           x[static_cast<std::size_t>(i)]);
                     // KV cache：2 kv 头，head_dim 256，最多 8 位置
                     GGMLKVCache cache;
-                    cache.init(static_cast<int>(cfg.head_count_kv), static_cast<int>(cfg.key_length),
-                               static_cast<int>(cfg.value_length), 8);
+                    cache.init(static_cast<int>(cfg.head_count_kv),
+                               static_cast<int>(cfg.key_length), static_cast<int>(cfg.value_length),
+                               8);
                     std::vector<float> y(static_cast<std::size_t>(hidden));
                     GGMLTransformerAttentionBlock(*blk, cfg, cache, 0, x.data(), y.data());
                     bool finite = true;

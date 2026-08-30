@@ -57,17 +57,17 @@ int main() {
     cfg.rope_freq_base = 10000.0f;
 
     // ---- 假权重（全部 0.1，正态无关，仅测结构）----
-    std::vector<float> w_q(8 * 4, 0.1f);       // [2*2*2=8, hidden=4]
-    std::vector<float> w_k(2 * 4, 0.1f);       // [kv*head_dim=2, 4]
+    std::vector<float> w_q(8 * 4, 0.1f); // [2*2*2=8, hidden=4]
+    std::vector<float> w_k(2 * 4, 0.1f); // [kv*head_dim=2, 4]
     std::vector<float> w_v(2 * 4, 0.1f);
-    std::vector<float> w_o(4 * 4, 0.1f);       // [hidden=4, n_head*head_dim=4]
-    std::vector<float> w_qn(2, 1.0f);          // q_norm
-    std::vector<float> w_kn(2, 1.0f);          // k_norm
-    std::vector<float> w_an(4, 1.0f);          // attn_norm
-    std::vector<float> w_pn(4, 1.0f);          // post_attention_norm
-    std::vector<float> w_fg(4 * 4, 0.1f);      // ffn_gate
-    std::vector<float> w_fu(4 * 4, 0.1f);      // ffn_up
-    std::vector<float> w_fd(4 * 4, 0.1f);      // ffn_down
+    std::vector<float> w_o(4 * 4, 0.1f);  // [hidden=4, n_head*head_dim=4]
+    std::vector<float> w_qn(2, 1.0f);     // q_norm
+    std::vector<float> w_kn(2, 1.0f);     // k_norm
+    std::vector<float> w_an(4, 1.0f);     // attn_norm
+    std::vector<float> w_pn(4, 1.0f);     // post_attention_norm
+    std::vector<float> w_fg(4 * 4, 0.1f); // ffn_gate
+    std::vector<float> w_fu(4 * 4, 0.1f); // ffn_up
+    std::vector<float> w_fd(4 * 4, 0.1f); // ffn_down
 
     GGUFTensorView v_q = make_view("attn_q", w_q, {4, 8});
     GGUFTensorView v_k = make_view("attn_k", w_k, {4, 2});

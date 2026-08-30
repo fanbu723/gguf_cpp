@@ -30,17 +30,17 @@ void GGMLTransformerAttentionBlock(const GGUFBlockWeights &w, const GGUFModelCon
     const int ffn_hidden = static_cast<int>(cfg.feed_forward_length);
 
     // ---- 反量化本层权重（每次调用重新反量化，学习阶段可接受）----
-    const std::vector<float> q_w = load_tensor(w.attn_q);        // [2*head_dim*n_head, hidden]
-    const std::vector<float> k_w = load_tensor(w.attn_k);        // [head_dim*n_kv, hidden]
-    const std::vector<float> v_w = load_tensor(w.attn_v);        // [head_dim*n_kv, hidden]
-    const std::vector<float> o_w = load_tensor(w.attn_output);   // [hidden, head_dim*n_head]
+    const std::vector<float> q_w = load_tensor(w.attn_q);         // [2*head_dim*n_head, hidden]
+    const std::vector<float> k_w = load_tensor(w.attn_k);         // [head_dim*n_kv, hidden]
+    const std::vector<float> v_w = load_tensor(w.attn_v);         // [head_dim*n_kv, hidden]
+    const std::vector<float> o_w = load_tensor(w.attn_output);    // [hidden, head_dim*n_head]
     const std::vector<float> q_norm = load_tensor(w.attn_q_norm); // [head_dim]
     const std::vector<float> k_norm = load_tensor(w.attn_k_norm); // [head_dim]
-    const std::vector<float> a_norm = load_tensor(w.attn_norm);  // [hidden]
+    const std::vector<float> a_norm = load_tensor(w.attn_norm);   // [hidden]
     const std::vector<float> p_norm = load_tensor(w.post_attention_norm); // [hidden]
-    const std::vector<float> f_gate = load_tensor(w.ffn_gate);   // [ffn_hidden, hidden]
-    const std::vector<float> f_up = load_tensor(w.ffn_up);       // [ffn_hidden, hidden]
-    const std::vector<float> f_down = load_tensor(w.ffn_down);   // [hidden, ffn_hidden]
+    const std::vector<float> f_gate = load_tensor(w.ffn_gate);            // [ffn_hidden, hidden]
+    const std::vector<float> f_up = load_tensor(w.ffn_up);                // [ffn_hidden, hidden]
+    const std::vector<float> f_down = load_tensor(w.ffn_down);            // [hidden, ffn_hidden]
 
     const std::size_t hid = static_cast<std::size_t>(hidden);
     // qg 是联合 Q+gate 投影的输出：2 × n_head × head_dim（Q 与 gate 各 n_head×head_dim）
@@ -104,7 +104,8 @@ void GGMLTransformerAttentionBlock(const GGUFBlockWeights &w, const GGUFModelCon
 
     // 9. post RMSNorm + SwiGLU FFN + 残差
     GGMLRmsNorm(y, p_norm.data(), xn.data(), hidden, cfg.rms_eps);
-    GGMLSwiGLU(f_gate.data(), f_up.data(), f_down.data(), xn.data(), tmp.data(), hidden, ffn_hidden);
+    GGMLSwiGLU(f_gate.data(), f_up.data(), f_down.data(), xn.data(), tmp.data(), hidden,
+               ffn_hidden);
     for (int i = 0; i < hidden; ++i)
         y[i] += tmp[static_cast<std::size_t>(i)];
 }

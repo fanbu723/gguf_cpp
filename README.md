@@ -19,10 +19,16 @@
 
 ## 项目目标
 
-1. **解析层**：完整读取 GGUF v3 文件 —— ✅ 已完成
-2. **数据层**：访问张量数据（mmap 挂载 + 反量化）
-3. **模型层**：加载权重并执行 Transformer 前向计算
-4. **生成层**：自回归文本生成（Sampler + 生成循环）
+按六个阶段逐步构建完整推理链路（当前状态见下）：
+
+| # | 阶段 | 状态 |
+| :-: | :--- | :--- |
+| ① | GGUF 解析器（头 / 元数据 / 张量表 / 数据区） | ✅ |
+| ② | 张量数据访问（mmap / 类型系统 / 反量化） | ✅ |
+| ③ | Tokenizer（byte-level BPE） | ✅ |
+| ④ | 模型权重加载（按名索引 / 配置 / 逐层组装） | ✅ |
+| ⑤ | Transformer 计算（算子 → 单层前向 → 全模型） | 🔄 进行中 |
+| ⑥ | 生成引擎（Sampler + 自回归 + Chat） | ⬜ |
 
 ---
 
@@ -42,8 +48,9 @@
 | Tokenizer（byte-level BPE，token↔文本，`tokenizer.*` 元数据） | ✅ |
 | 模型权重加载（按名索引 + 配置解析 + 逐层权重组装） | ✅ |
 | 基础算子（gemv/gemm/softmax/RMSNorm/SwiGLU/RoPE/Attention/KV cache） | ✅（阶段⑤ 第 1 步） |
+| 纯 Attention 层前向（Q+gate 联合投影 / GQA / KV cache / 残差） | ✅（阶段⑤ 第 2 步） |
 
-运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器演示、权重加载与基础算子演示。
+运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子与真实模型层前向演示。
 
 ---
 
@@ -56,7 +63,7 @@
 | **② 张量数据访问** | ✅ 全部完成（mmap / 类型系统 / 反量化） | — |
 | **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | ✅ 全部完成（按名索引 / 配置 / 逐层组装） | embedding / norm / attn / ffn / ssm |
-| **⑤ Transformer 计算** 🔄 进行中 | 算子层 ✅；待：Attention 层前向、SSM 混合层、全模型 | 矩阵乘、前向传播 |
+| **⑤ Transformer 计算** 🔄 进行中 | 算子层 ✅、Attention 层前向 ✅；待：SSM 混合层、全模型 | 矩阵乘、前向传播 |
 | **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
 ### 阶段 ②：张量数据访问 ✅
@@ -175,10 +182,10 @@ gguf_cpp/
 cmake -S . -B build
 cmake --build build
 
-# 运行（加载模型并打印元数据 / 张量表 / 类型验证 / mmap 读取）
+# 运行（加载模型，打印元数据/张量表/类型验证/mmap/反量化/分词/权重/算子/层前向）
 ./build/main
 
-# 运行测试（CTest）
+# 运行全部测试（CTest，当前 8 个：解析/类型/反量化/分词/真实分词/权重/算子/层前向）
 ctest --test-dir build --output-on-failure
 ```
 
@@ -219,6 +226,12 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ 转换自检：`GGMLBF16ToFloat(0x3F80)=1.0`、`(0x4000)=2.0`
 - ✅ F32 反量化 == 直接读，交叉验证一致
 - ✅ 反量化单元测试 17 项（BF16 / F16 / Q4_0 / Q8_0 / 边界）全部通过
+
+**阶段⑤ 验证（Transformer 计算）**：
+- ✅ 基础算子单测 14 项全过（gemv / gemm / softmax / RMSNorm / SwiGLU / RoPE / GQA+KV cache）
+- ✅ Attention 层前向单测 5 项全过（结构 / 确定性 / KV 递增 / RoPE 位置影响）
+- ✅ 真实模型 `blk.3`（纯 Attention 层）前向跑通，无越界
+- ⚠️ 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN，导致真实前向输出 NaN（属模型文件本身数据，非实现 bug）
 
 ---
 
