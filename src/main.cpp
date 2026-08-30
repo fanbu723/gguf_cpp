@@ -11,6 +11,7 @@
 #include "GGMLDequantize.hpp"
 #include "GGMLNorm.hpp"
 #include "GGMLRope.hpp"
+#include "GGMLSSM.hpp"
 #include "GGMLTransformer.hpp"
 #include "GGMLType.hpp"
 #include "GGUFLoader.hpp"
@@ -339,6 +340,47 @@ int main() {
                               << std::endl;
                 } else {
                     std::cout << "  未找到 Attention 层或 token_embd" << std::endl;
+                }
+            }
+
+            // ---- 阶段⑤ 第3步：真实模型 SSM 混合层前向演示 ----
+            std::cout << "\n  --- 阶段⑤ 第3步：SSM 混合层前向（真实权重）---" << std::endl;
+            {
+                const GGUFBlockWeights *blk = nullptr;
+                for (const auto &b : weights.blocks())
+                    if (b.is_ssm()) {
+                        blk = &b;
+                        break;
+                    }
+                const auto *embd = weights.token_embd();
+                if (blk && embd) {
+                    const auto &cfg = weights.config();
+                    const int hidden = static_cast<int>(cfg.embedding_length);
+                    std::vector<float> x(static_cast<std::size_t>(hidden));
+                    for (int i = 0; i < hidden; ++i)
+                        embd->read_element(static_cast<std::uint64_t>(i),
+                                           x[static_cast<std::size_t>(i)]);
+                    // SSM 状态：n_group 个 v-head × d_state×d_state；conv_dim = 2×key_dim +
+                    // value_dim
+                    const int n_group = static_cast<int>(cfg.ssm_group_count);
+                    const int d_state = static_cast<int>(cfg.ssm_state_size);
+                    const int key_dim = d_state * n_group;
+                    const int conv_dim = 2 * key_dim + static_cast<int>(cfg.ssm_inner_size);
+                    GGMLSSMState st;
+                    st.init(n_group, d_state, conv_dim);
+                    std::vector<float> y(static_cast<std::size_t>(hidden));
+                    GGMLSSMLayer(*blk, cfg, st, x.data(), y.data());
+                    bool finite = true;
+                    for (float v : y)
+                        if (!std::isfinite(v))
+                            finite = false;
+                    std::cout << "  blk.0(SSM 层) 前向输出 前 4 个元素: ";
+                    for (int i = 0; i < 4; ++i)
+                        std::cout << y[static_cast<std::size_t>(i)] << (i + 1 < 4 ? ", " : "");
+                    std::cout << "  全有限: " << (finite ? "✅" : "❌（模型权重含 NaN）")
+                              << std::endl;
+                } else {
+                    std::cout << "  未找到 SSM 层或 token_embd" << std::endl;
                 }
             }
         } else {
