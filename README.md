@@ -40,8 +40,9 @@
 | GGML 类型系统（`type_size` / `block_size` / 字节数） | ✅ |
 | 反量化（F16 / BF16 / Q4_0 / Q8_0 → float） | ✅ |
 | Tokenizer（byte-level BPE，token↔文本，`tokenizer.*` 元数据） | ✅ |
+| 模型权重加载（按名索引 + 配置解析 + 逐层权重组装） | ✅ |
 
-运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果与分词器演示。
+运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器演示与权重加载演示。
 
 ---
 
@@ -53,8 +54,8 @@
 | :--- | :--- | :--- |
 | **② 张量数据访问** | ✅ 全部完成（mmap / 类型系统 / 反量化） | — |
 | **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
-| **④ 模型权重加载** ⬅ **下一步** | Model 容器、按名查张量、组装各层权重 | embedding / norm / attn / ffn |
-| **⑤ Transformer 计算** | RMSNorm / RoPE / Attention(+KV cache) / SwiGLU | 矩阵乘、前向传播 |
+| **④ 模型权重加载** | ✅ 全部完成（按名索引 / 配置 / 逐层组装） | embedding / norm / attn / ffn / ssm |
+| **⑤ Transformer 计算** ⬅ **下一步** | RMSNorm / RoPE / Attention(+KV cache) / SSM / SwiGLU | 矩阵乘、前向传播 |
 | **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
 ### 阶段 ②：张量数据访问 ✅
@@ -72,12 +73,16 @@
 - [x] 实测：`encode("Hello, world!")` → `9419,11,1814,0`，decode(encode) 往返一致；中文 `你好，世界！` → 4 tokens 往返一致
 - [x] 单元测试 `test_tokenizer`（不依赖模型，手建 vocab 验证 BPE / 字节还原）
 
-### 阶段 ④：模型权重加载 ⬅ 下一步
+### 阶段 ④：模型权重加载 ✅
 
-- [ ] Model 容器：按名称查找张量（embedding、各层权重）
-- [ ] Transformer 层权重组装（RMSNorm / RoPE / Attention / FFN）
+- [x] `GGUFModelWeights`：按名称索引全部 320 个张量（`find`，零拷贝指向 mmap 区）
+- [x] `GGUFTensorView`：张量视图（dims/type/data）+ 反量化读取（`read_element` / `read_all`）
+- [x] `GGUFModelConfig`：解析 `qwen35.*` 配置（block / hidden / head / FFN / SSM / RoPE）
+- [x] `GGUFBlockWeights`：逐层权重组装，`is_attention()` / `is_ssm()` 区分两类块
+- [x] 实测：24 层（6 个纯 Attention 层 + 18 个 SSM 混合层），hidden=1024，共享 embedding（无 output.weight）
+- [x] 单元测试 `test_model_weights`（不依赖模型，手建假模型验证索引/配置/组装/读取）
 
-### 阶段 ⑤：Transformer 计算
+### 阶段 ⑤：Transformer 计算 ⬅ 下一步
 
 - [ ] 基础算子：矩阵乘、RMSNorm、RoPE、Attention、SwiGLU
 - [ ] KV cache 管理
@@ -101,20 +106,23 @@ gguf_cpp/
 │   ├── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
 │   ├── GGMLType.hpp            # GGML 类型描述（type_size / block_size）
 │   ├── GGMLDequantize.hpp      # 反量化（F16/BF16/Q4_0/Q8_0 → float）
-│   └── GGUFTokenizer.hpp       # 分词器（byte-level BPE，token↔文本）
+│   ├── GGUFTokenizer.hpp       # 分词器（byte-level BPE，token↔文本）
+│   └── GGUFModelWeights.hpp    # 权重加载（按名索引 / 配置 / 逐层组装）
 ├── src/
-│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词
+│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重
 │   ├── core/
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
 │   │   ├── GGMLType.cpp        # 类型表实现
 │   │   ├── GGMLDequantize.cpp  # 反量化实现
-│   │   └── GGUFTokenizer.cpp   # 分词器实现
+│   │   ├── GGUFTokenizer.cpp   # 分词器实现
+│   │   └── GGUFModelWeights.cpp # 权重加载实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
 │       ├── test_dequantize.cpp   # 反量化单元测试
-│       └── test_tokenizer.cpp    # 分词器单元测试
+│       ├── test_tokenizer.cpp    # 分词器单元测试
+│       └── test_model_weights.cpp# 权重加载单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```

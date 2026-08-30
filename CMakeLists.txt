@@ -16,6 +16,7 @@ include(CTest)
 
 add_executable(main
     src/main.cpp
+    include/core/GGUFModelWeights.hpp
     )
 
 add_library(MyLib STATIC 
@@ -23,7 +24,8 @@ add_library(MyLib STATIC
     src/core/GGUFMmap.cpp 
     src/core/GGMLType.cpp
     src/core/GGMLDequantize.cpp
-    src/core/GGUFTokenizer.cpp)
+    src/core/GGUFTokenizer.cpp
+    src/core/GGUFModelWeights.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
@@ -58,5 +60,11 @@ if(BUILD_TESTING)
         )
     target_link_libraries(test_tokenizer PRIVATE MyLib)
     add_test(NAME tokenizer COMMAND test_tokenizer)
+
+    add_executable(test_model_weights
+        src/test/test_model_weights.cpp
+        )
+    target_link_libraries(test_model_weights PRIVATE MyLib)
+    add_test(NAME model_weights COMMAND test_model_weights)
 endif()
 

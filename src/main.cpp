@@ -10,6 +10,7 @@
 #include "GGMLDequantize.hpp"
 #include "GGMLType.hpp"
 #include "GGUFLoader.hpp"
+#include "GGUFModelWeights.hpp"
 #include "GGUFTokenizer.hpp"
 
 std::string model_path = "/home/dongfan/llm/unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-BF16.gguf";
@@ -192,6 +193,53 @@ int main() {
                       << std::endl;
         }
 
+        GGUFLoader::unmap_data(model);
+    }
+
+    std::cout << "\n=== 模型权重加载演示（阶段④）===" << std::endl;
+    if (GGUFLoader::map_data(model_path, model)) {
+        GGUFModelWeights weights;
+        if (weights.build(model)) {
+            const auto &cfg = weights.config();
+            std::cout << "  架构: " << (cfg.arch.empty() ? "?" : cfg.arch)
+                      << "  层数: " << cfg.block_count << "  hidden: " << cfg.embedding_length
+                      << "  heads: " << cfg.head_count << "x" << cfg.head_count_kv
+                      << "kv  FFN: " << cfg.feed_forward_length
+                      << "  SSM state: " << cfg.ssm_state_size
+                      << "  全注意力间隔: " << cfg.full_attention_interval << std::endl;
+            std::cout << "  张量视图数: " << weights.count() << std::endl;
+
+            std::uint32_t attn = 0, ssm = 0;
+            for (const auto &b : weights.blocks())
+                (b.is_attention() ? attn : ssm)++;
+            std::cout << "  块类型: Attention 层 " << attn << " 个 / SSM 层 " << ssm << " 个"
+                      << std::endl;
+
+            if (const auto *embd = weights.token_embd()) {
+                std::vector<float> buf;
+                if (embd->read_all(buf) && buf.size() >= 8) {
+                    std::cout << "  token_embd.weight 前 8 个元素: ";
+                    for (std::size_t i = 0; i < 8; ++i)
+                        std::cout << buf[i] << (i + 1 < 8 ? ", " : "");
+                    std::cout << std::endl;
+                }
+            }
+            if (!weights.blocks().empty()) {
+                const auto &b0 = weights.blocks()[0];
+                const char *kind = b0.is_ssm() ? "SSM 混合层" : "Attention 层";
+                if (const auto *norm = b0.attn_norm) {
+                    std::vector<float> buf;
+                    if (norm->read_all(buf) && buf.size() >= 4) {
+                        std::cout << "  blk.0(" << kind << ") attn_norm 前 4 个元素: ";
+                        for (std::size_t i = 0; i < 4; ++i)
+                            std::cout << buf[i] << (i + 1 < 4 ? ", " : "");
+                        std::cout << std::endl;
+                    }
+                }
+            }
+        } else {
+            std::cerr << "  ❌ 权重索引构建失败" << std::endl;
+        }
         GGUFLoader::unmap_data(model);
     }
 
