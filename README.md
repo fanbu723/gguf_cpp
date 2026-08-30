@@ -96,11 +96,17 @@
 
 > 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN（指数全 1、尾数非 0），属模型文件本身数据，非解析错误；正常前向会产生 NaN 输出。
 
+**第 2 步：纯 Attention 层前向 ✅**
+
+- [x] `GGMLTransformer`：完整层前向（RMSNorm → Q+gate 联合投影 → Q/K 拆分 → Q/K RMSNorm → RoPE → KV cache → GQA → ×sigmoid(gate) → 输出投影 → 残差 → post RMSNorm → SwiGLU FFN → 残差）
+- [x] 头布局校准：attn_q 是「联合 Q+gate 投影」（2×head_dim×n_head），head_dim=key_length=256，attn_output 输入 = n_head×head_dim = 2048
+- [x] 单元测试 `test_transformer`（假权重验证结构/确定性/维度/RoPE 位置影响）
+- [x] 真实模型：blk.3 层前向跑通（输出 NaN 系模型权重本身含 NaN）
+
 **待做（下一步）**
 
-- [ ] Attention 层前向（Q/K/V 投影 + RoPE + KV cache + 输出投影，对照 qwen35 头布局）
-- [ ] SSM 混合层前向（conv1d + 状态空间递推，Mamba 风格）
-- [ ] 多层前向 → 全模型 logits
+- [ ] SSM 混合层前向（qwen35 用 gated delta net：qkvz 投影 + conv1d + 状态空间递推 + gated norm，Mamba 风格）
+- [ ] 多层前向 → 全模型 logits（含 output_norm + 共享 embedding）
 
 ### 阶段 ⑥：生成引擎
 
@@ -128,6 +134,7 @@ gguf_cpp/
 │   ├── GGMLFFN.hpp             # SwiGLU 前馈
 │   ├── GGMLRope.hpp            # RoPE 旋转位置编码
 │   └── GGMLAttention.hpp       # KV cache + GQA 注意力
+│   └── GGMLTransformer.hpp     # 纯 Attention 层完整前向
 ├── src/
 │   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子
 │   ├── core/
@@ -142,7 +149,8 @@ gguf_cpp/
 │   │   ├── GGMLNorm.cpp        # RMSNorm 实现
 │   │   ├── GGMLFFN.cpp         # SwiGLU 实现
 │   │   ├── GGMLRope.cpp        # RoPE 实现
-│   │   └── GGMLAttention.cpp   # Attention + KV cache 实现
+│   │   ├── GGMLAttention.cpp   # Attention + KV cache 实现
+│   │   └── GGMLTransformer.cpp # 层前向实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
@@ -150,7 +158,8 @@ gguf_cpp/
 │       ├── test_tokenizer.cpp    # 分词器单元测试
 │       ├── test_tokenizer_ggml.cpp # 真实模型分词器验证
 │       ├── test_model_weights.cpp# 权重加载单元测试
-│       └── test_model_ops.cpp    # 基础算子单元测试
+│       ├── test_model_ops.cpp    # 基础算子单元测试
+│       └── test_transformer.cpp  # Attention 层前向单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```

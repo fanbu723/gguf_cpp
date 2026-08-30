@@ -11,6 +11,7 @@
 #include "GGMLDequantize.hpp"
 #include "GGMLNorm.hpp"
 #include "GGMLRope.hpp"
+#include "GGMLTransformer.hpp"
 #include "GGMLType.hpp"
 #include "GGUFLoader.hpp"
 #include "GGUFModelWeights.hpp"
@@ -299,6 +300,43 @@ int main() {
                     for (int i = 0; i < 4; ++i)
                         std::cout << y[i] << (i + 1 < 4 ? ", " : "");
                     std::cout << "  范数 " << n0 << "→" << n1 << "（应相等）" << std::endl;
+                }
+            }
+
+            // ---- 阶段⑤ 第2步：真实模型 Attention 层前向演示 ----
+            std::cout << "\n  --- 阶段⑤ 第2步：Attention 层前向（真实权重）---" << std::endl;
+            {
+                const GGUFBlockWeights *blk = nullptr;
+                for (const auto &b : weights.blocks())
+                    if (b.is_attention()) {
+                        blk = &b;
+                        break;
+                    }
+                const auto *embd = weights.token_embd();
+                if (blk && embd) {
+                    const auto &cfg = weights.config();
+                    const int hidden = static_cast<int>(cfg.embedding_length);
+                    // 用 token 0 的 embedding 作为输入（读前 hidden 个元素）
+                    std::vector<float> x(static_cast<std::size_t>(hidden));
+                    for (int i = 0; i < hidden; ++i)
+                        embd->read_element(static_cast<std::uint64_t>(i), x[static_cast<std::size_t>(i)]);
+                    // KV cache：2 kv 头，head_dim 256，最多 8 位置
+                    GGMLKVCache cache;
+                    cache.init(static_cast<int>(cfg.head_count_kv), static_cast<int>(cfg.key_length),
+                               static_cast<int>(cfg.value_length), 8);
+                    std::vector<float> y(static_cast<std::size_t>(hidden));
+                    GGMLTransformerAttentionBlock(*blk, cfg, cache, 0, x.data(), y.data());
+                    bool finite = true;
+                    for (float v : y)
+                        if (!std::isfinite(v))
+                            finite = false;
+                    std::cout << "  blk.3(Attention 层) 前向输出 前 4 个元素: ";
+                    for (int i = 0; i < 4; ++i)
+                        std::cout << y[static_cast<std::size_t>(i)] << (i + 1 < 4 ? ", " : "");
+                    std::cout << "  全有限: " << (finite ? "✅" : "❌（模型权重含 NaN）")
+                              << std::endl;
+                } else {
+                    std::cout << "  未找到 Attention 层或 token_embd" << std::endl;
                 }
             }
         } else {

@@ -29,7 +29,8 @@ add_library(MyLib STATIC
     src/model/GGMLNorm.cpp
     src/model/GGMLFFN.cpp
     src/model/GGMLRope.cpp
-    src/model/GGMLAttention.cpp)
+    src/model/GGMLAttention.cpp
+    src/model/GGMLTransformer.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
@@ -77,6 +78,12 @@ if(BUILD_TESTING)
         )
     target_link_libraries(test_model_ops PRIVATE MyLib)
     add_test(NAME model_ops COMMAND test_model_ops)
+
+    add_executable(test_transformer
+        src/test/test_transformer.cpp
+        )
+    target_link_libraries(test_transformer PRIVATE MyLib)
+    add_test(NAME transformer COMMAND test_transformer)
 
     add_executable(test_tokenizer_ggml
         src/test/test_tokenizer_ggml.cpp
