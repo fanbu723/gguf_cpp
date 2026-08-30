@@ -50,8 +50,9 @@
 | 基础算子（gemv/gemm/softmax/RMSNorm/SwiGLU/RoPE/Attention/KV cache） | ✅（阶段⑤ 第 1 步） |
 | 纯 Attention 层前向（Q+gate 联合投影 / GQA / KV cache / 残差） | ✅（阶段⑤ 第 2 步） |
 | SSM 混合层前向（Gated Delta Net：conv1d / 状态递推 / gated norm） | ✅（阶段⑤ 第 3 步） |
+| 全模型前向（24 层混合 + output_norm + 共享 embedding logits） | ✅（阶段⑤ 第 4 步） |
 
-运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子与真实模型层前向（Attention + SSM）演示。
+运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子、层前向（Attention + SSM）与全模型前向演示。
 
 ---
 
@@ -64,8 +65,8 @@
 | **② 张量数据访问** | ✅ 全部完成（mmap / 类型系统 / 反量化） | — |
 | **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | ✅ 全部完成（按名索引 / 配置 / 逐层组装） | embedding / norm / attn / ffn / ssm |
-| **⑤ Transformer 计算** 🔄 进行中 | 算子层 ✅、Attention 层 ✅、SSM 层 ✅；待：全模型 logits | 矩阵乘、前向传播 |
-| **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
+| **⑤ Transformer 计算** | ✅ 全部完成（算子 / Attention / SSM / 全模型前向） | 矩阵乘、前向传播 |
+| **⑥ 生成引擎** ⬅ **下一步** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
 ### 阶段 ②：张量数据访问 ✅
 
@@ -91,7 +92,7 @@
 - [x] 实测：24 层（6 个纯 Attention 层 + 18 个 SSM 混合层），hidden=1024，共享 embedding（无 output.weight）
 - [x] 单元测试 `test_model_weights`（不依赖模型，手建假模型验证索引/配置/组装/读取）
 
-### 阶段 ⑤：Transformer 计算 🔄 进行中
+### 阶段 ⑤：Transformer 计算 ✅
 
 **第 1 步：基础算子层 ✅**
 
@@ -119,11 +120,14 @@
 - [x] 单元测试 `test_ssm`（手算 delta net + 层结构/确定性/状态累积/conv 推进）
 - [x] 真实模型：blk.0 SSM 层前向跑通（输出 NaN 系模型权重本身含 NaN）
 
-**待做（下一步）**
+**第 4 步：全模型前向 ✅**
 
-- [ ] 多层前向 → 全模型 logits（24 层混合 SSM/Attention + output_norm + 共享 embedding）
+- [x] `GGMLForward`：token_embd → 24 层混合循环（`is_ssm()` / `is_attention()` 分发）→ output_norm → 共享 embedding 投影得 logits
+- [x] `GGMLModelState`：每层各一份 KV cache / SSM 状态，跨 token 持久（自回归解码准备）
+- [x] 单元测试 `test_forward`（2 层假模型：logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
+- [x] 真实模型：完整 24 层前向 → logits[248320]（全 NaN 系模型权重本身含 NaN）
 
-### 阶段 ⑥：生成引擎
+### 阶段 ⑥：生成引擎 ⬅ 下一步
 
 - [ ] Sampler（temperature / top-k / top-p）
 - [ ] 自回归生成循环（预填充 + 逐 token 解码）
@@ -150,7 +154,8 @@ gguf_cpp/
 │   ├── GGMLRope.hpp            # RoPE 旋转位置编码
 │   └── GGMLAttention.hpp       # KV cache + GQA 注意力
 │   ├── GGMLTransformer.hpp     # 纯 Attention 层完整前向
-│   └── GGMLSSM.hpp             # SSM 混合层（Gated Delta Net）前向
+│   ├── GGMLSSM.hpp             # SSM 混合层（Gated Delta Net）前向
+│   └── GGMLForward.hpp         # 全模型前向（多层 + logits）
 ├── src/
 │   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子
 │   ├── core/
@@ -167,7 +172,8 @@ gguf_cpp/
 │   │   ├── GGMLRope.cpp        # RoPE 实现
 │   │   ├── GGMLAttention.cpp   # Attention + KV cache 实现
 │   │   ├── GGMLTransformer.cpp # 层前向实现
-│   │   └── GGMLSSM.cpp         # SSM 层（delta net）实现
+│   │   ├── GGMLSSM.cpp         # SSM 层（delta net）实现
+│   │   └── GGMLForward.cpp     # 全模型前向实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
@@ -177,7 +183,8 @@ gguf_cpp/
 │       ├── test_model_weights.cpp# 权重加载单元测试
 │       ├── test_model_ops.cpp    # 基础算子单元测试
 │       ├── test_transformer.cpp  # Attention 层前向单元测试
-│       └── test_ssm.cpp          # SSM 层前向单元测试
+│       ├── test_ssm.cpp          # SSM 层前向单元测试
+│       └── test_forward.cpp      # 全模型前向单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
@@ -242,6 +249,8 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ 基础算子单测 14 项全过（gemv / gemm / softmax / RMSNorm / SwiGLU / RoPE / GQA+KV cache）
 - ✅ Attention 层前向单测 5 项全过（结构 / 确定性 / KV 递增 / RoPE 位置影响）
 - ✅ SSM 层单测：delta net 手算一致 + 层结构 / 确定性 / 状态累积 / conv 推进
+- ✅ 全模型前向单测 6 项（logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
+- ✅ 真实模型完整 24 层前向 → logits[248320]（全 NaN 系模型权重本身含 NaN）
 - ✅ 真实模型 `blk.3`（纯 Attention 层）与 `blk.0`（SSM 层）前向均跑通，无越界
 - ⚠️ 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN，导致真实前向输出 NaN（属模型文件本身数据，非实现 bug）
 

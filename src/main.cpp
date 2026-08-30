@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "GGMLDequantize.hpp"
+#include "GGMLForward.hpp"
 #include "GGMLNorm.hpp"
 #include "GGMLRope.hpp"
 #include "GGMLSSM.hpp"
@@ -382,6 +383,29 @@ int main() {
                 } else {
                     std::cout << "  未找到 SSM 层或 token_embd" << std::endl;
                 }
+            }
+
+            // ---- 阶段⑤ 第4步：真实模型全模型前向演示 ----
+            std::cout << "\n  --- 阶段⑤ 第4步：全模型前向（真实权重）---" << std::endl;
+            {
+                GGMLModelState st;
+                st.init(weights, 32);
+                std::vector<float> logits;
+                GGMLForward(weights, st, 0, 0, logits);
+                bool fin = true;
+                int nan_cnt = 0;
+                for (float v : logits) {
+                    if (!std::isfinite(v)) {
+                        fin = false;
+                        ++nan_cnt;
+                    }
+                }
+                std::cout << "  token 0 前向 → logits 大小 " << logits.size() << ", 前 5 个: ";
+                for (int i = 0; i < 5 && i < static_cast<int>(logits.size()); ++i)
+                    std::cout << logits[static_cast<std::size_t>(i)] << (i + 1 < 5 ? ", " : "");
+                std::cout << "  全有限: "
+                          << (fin ? "✅" : "❌（NaN " + std::to_string(nan_cnt) + " 个，模型权重含 NaN）")
+                          << std::endl;
             }
         } else {
             std::cerr << "  ❌ 权重索引构建失败" << std::endl;
