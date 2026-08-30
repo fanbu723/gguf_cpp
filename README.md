@@ -39,8 +39,9 @@
 | mmap 挂载数据区（`map_data` / `unmap_data`，RAII） | ✅ |
 | GGML 类型系统（`type_size` / `block_size` / 字节数） | ✅ |
 | 反量化（F16 / BF16 / Q4_0 / Q8_0 → float） | ✅ |
+| Tokenizer（byte-level BPE，token↔文本，`tokenizer.*` 元数据） | ✅ |
 
-运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取与反量化结果。
+运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果与分词器演示。
 
 ---
 
@@ -51,8 +52,8 @@
 | 阶段 | 内容 | 关键点 |
 | :--- | :--- | :--- |
 | **② 张量数据访问** | ✅ 全部完成（mmap / 类型系统 / 反量化） | — |
-| **③ Tokenizer** ⬅ **下一步** | vocab 加载、byte-level BPE、token↔文本 | 解析 `tokenizer.*` 元数据 |
-| **④ 模型权重加载** | Model 容器、按名查张量、组装各层权重 | embedding / norm / attn / ffn |
+| **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
+| **④ 模型权重加载** ⬅ **下一步** | Model 容器、按名查张量、组装各层权重 | embedding / norm / attn / ffn |
 | **⑤ Transformer 计算** | RMSNorm / RoPE / Attention(+KV cache) / SwiGLU | 矩阵乘、前向传播 |
 | **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
@@ -63,13 +64,15 @@
 - [x] 读取指定张量原始字节（按 `offset` 定位，已验证 offset 为**数据区相对偏移**）
 - [x] 反量化：F16 / BF16 / Q4_0 / Q8_0 → `float`（含单元测试）
 
-### 阶段 ③：Tokenizer
+### 阶段 ③：Tokenizer ✅
 
-- [ ] 词汇表加载（token 列表 / 分数 / 类型，来自 `tokenizer.ggml.*` 元数据）
-- [ ] byte-level BPE 分词
-- [ ] token id ↔ 文本 互转
+- [x] 词汇表加载：token 列表 / 分数 / 类型、merges、model 类型、bos/eos/pad/unk id
+- [x] byte-level BPE：gpt2 风格字节↔Unicode 映射表、贪心 merge（按 rank）
+- [x] token id ↔ 文本 互转（decode 按逐码点字节还原，中文/特殊字符无损）
+- [x] 实测：`encode("Hello, world!")` → `9419,11,1814,0`，decode(encode) 往返一致；中文 `你好，世界！` → 4 tokens 往返一致
+- [x] 单元测试 `test_tokenizer`（不依赖模型，手建 vocab 验证 BPE / 字节还原）
 
-### 阶段 ④：模型权重加载
+### 阶段 ④：模型权重加载 ⬅ 下一步
 
 - [ ] Model 容器：按名称查找张量（embedding、各层权重）
 - [ ] Transformer 层权重组装（RMSNorm / RoPE / Attention / FFN）
@@ -92,23 +95,26 @@
 
 ```text
 gguf_cpp/
-├── CMakeLists.txt              # 构建（main / test_gguf_parser 可执行 + MyLib 静态库）
+├── CMakeLists.txt              # 构建（main / test_* 可执行 + MyLib 静态库）
 ├── README.md                   # 本文档
 ├── include/core/
 │   ├── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
 │   ├── GGMLType.hpp            # GGML 类型描述（type_size / block_size）
-│   └── GGMLDequantize.hpp      # 反量化（F16/BF16/Q4_0/Q8_0 → float）
+│   ├── GGMLDequantize.hpp      # 反量化（F16/BF16/Q4_0/Q8_0 → float）
+│   └── GGUFTokenizer.hpp       # 分词器（byte-level BPE，token↔文本）
 ├── src/
-│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化
+│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词
 │   ├── core/
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
 │   │   ├── GGMLType.cpp        # 类型表实现
-│   │   └── GGMLDequantize.cpp  # 反量化实现
+│   │   ├── GGMLDequantize.cpp  # 反量化实现
+│   │   └── GGUFTokenizer.cpp   # 分词器实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
-│       └── test_dequantize.cpp   # 反量化单元测试
+│       ├── test_dequantize.cpp   # 反量化单元测试
+│       └── test_tokenizer.cpp    # 分词器单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```

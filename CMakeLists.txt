@@ -22,7 +22,8 @@ add_library(MyLib STATIC
     src/core/GGUFLoader.cpp 
     src/core/GGUFMmap.cpp 
     src/core/GGMLType.cpp
-    src/core/GGMLDequantize.cpp)
+    src/core/GGMLDequantize.cpp
+    src/core/GGUFTokenizer.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
@@ -51,5 +52,11 @@ if(BUILD_TESTING)
         )
     target_link_libraries(test_dequantize PRIVATE MyLib)
     add_test(NAME dequantize COMMAND test_dequantize)
+
+    add_executable(test_tokenizer
+        src/test/test_tokenizer.cpp
+        )
+    target_link_libraries(test_tokenizer PRIVATE MyLib)
+    add_test(NAME tokenizer COMMAND test_tokenizer)
 endif()
 
