@@ -1,5 +1,6 @@
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -8,6 +9,8 @@
 #include <utility>
 
 #include "GGMLDequantize.hpp"
+#include "GGMLNorm.hpp"
+#include "GGMLRope.hpp"
 #include "GGMLType.hpp"
 #include "GGUFLoader.hpp"
 #include "GGUFModelWeights.hpp"
@@ -235,6 +238,67 @@ int main() {
                             std::cout << buf[i] << (i + 1 < 4 ? ", " : "");
                         std::cout << std::endl;
                     }
+                }
+            }
+
+            // ---- 阶段⑤ 基础算子在真实权重上演示 ----
+            std::cout << "\n  --- 阶段⑤ 基础算子演示（真实权重）---" << std::endl;
+            if (!weights.blocks().empty()) {
+                const auto &b0 = weights.blocks()[0];
+                const auto &cfg = weights.config();
+                const int hidden = static_cast<int>(cfg.embedding_length);
+                // RMSNorm：输入全 1，用真实 gamma
+                if (const auto *norm = b0.attn_norm) {
+                    std::vector<float> gamma;
+                    if (norm->read_all(gamma) && gamma.size() >= 4) {
+                        std::vector<float> x(static_cast<std::size_t>(hidden), 1.0f);
+                        std::vector<float> y(static_cast<std::size_t>(hidden));
+                        GGMLRmsNorm(x.data(), gamma.data(), y.data(), hidden, cfg.rms_eps);
+                        std::cout << "  RMSNorm(全1输入) 前 4 个输出: ";
+                        for (int i = 0; i < 4; ++i)
+                            std::cout << y[i] << (i + 1 < 4 ? ", " : "");
+                        std::cout << std::endl;
+                    }
+                }
+                // SwiGLU FFN：诊断权重中的 NaN
+                // 实测：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN（指数全 1、尾数非 0），
+                // 属模型文件本身数据，非解析错误；正常前向会因此产生 NaN 输出。
+                if (b0.ffn_gate && b0.ffn_up && b0.ffn_down) {
+                    std::vector<float> gate, up, down;
+                    if (b0.ffn_gate->read_all(gate) && b0.ffn_up->read_all(up) &&
+                        b0.ffn_down->read_all(down)) {
+                        auto count_nan = [](const std::vector<float> &v) {
+                            std::size_t n = 0;
+                            for (float f : v)
+                                if (std::isnan(f))
+                                    ++n;
+                            return n;
+                        };
+                        std::cout << "  SwiGLU 权重: gate=" << gate.size() << " up=" << up.size()
+                                  << " down=" << down.size() << "  NaN 数: " << count_nan(gate)
+                                  << "/" << count_nan(up) << "/" << count_nan(down)
+                                  << "（BF16 权重本身含 NaN）" << std::endl;
+                    }
+                }
+                // RoPE：旋转保范演示
+                {
+                    std::vector<float> q(8, 0.0f), y(8);
+                    for (int i = 0; i < 8; ++i)
+                        q[static_cast<std::size_t>(i)] = static_cast<float>(i + 1);
+                    GGMLRopeNeox(q.data(), y.data(), 8, 8, 3, cfg.rope_freq_base);
+                    float n0 = 0, n1 = 0;
+                    for (int i = 0; i < 4; ++i) {
+                        n0 +=
+                            q[static_cast<std::size_t>(i)] * q[static_cast<std::size_t>(i)] +
+                            q[static_cast<std::size_t>(i + 4)] * q[static_cast<std::size_t>(i + 4)];
+                        n1 +=
+                            y[static_cast<std::size_t>(i)] * y[static_cast<std::size_t>(i)] +
+                            y[static_cast<std::size_t>(i + 4)] * y[static_cast<std::size_t>(i + 4)];
+                    }
+                    std::cout << "  RoPE(pos=3) 前 4 维: ";
+                    for (int i = 0; i < 4; ++i)
+                        std::cout << y[i] << (i + 1 < 4 ? ", " : "");
+                    std::cout << "  范数 " << n0 << "→" << n1 << "（应相等）" << std::endl;
                 }
             }
         } else {

@@ -16,7 +16,6 @@ include(CTest)
 
 add_executable(main
     src/main.cpp
-    include/core/GGUFModelWeights.hpp
     )
 
 add_library(MyLib STATIC 
@@ -25,10 +24,16 @@ add_library(MyLib STATIC
     src/core/GGMLType.cpp
     src/core/GGMLDequantize.cpp
     src/core/GGUFTokenizer.cpp
-    src/core/GGUFModelWeights.cpp)
+    src/core/GGUFModelWeights.cpp
+    src/model/GGMLOps.cpp
+    src/model/GGMLNorm.cpp
+    src/model/GGMLFFN.cpp
+    src/model/GGMLRope.cpp
+    src/model/GGMLAttention.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
+    ${PROJECT_SOURCE_DIR}/include/model
 )
 
 target_link_libraries(main PRIVATE 
@@ -66,5 +71,17 @@ if(BUILD_TESTING)
         )
     target_link_libraries(test_model_weights PRIVATE MyLib)
     add_test(NAME model_weights COMMAND test_model_weights)
+
+    add_executable(test_model_ops
+        src/test/test_model_ops.cpp
+        )
+    target_link_libraries(test_model_ops PRIVATE MyLib)
+    add_test(NAME model_ops COMMAND test_model_ops)
+
+    add_executable(test_tokenizer_ggml
+        src/test/test_tokenizer_ggml.cpp
+        )
+    target_link_libraries(test_tokenizer_ggml PRIVATE MyLib)
+    add_test(NAME tokenizer_ggml COMMAND test_tokenizer_ggml)
 endif()
 

@@ -41,8 +41,9 @@
 | 反量化（F16 / BF16 / Q4_0 / Q8_0 → float） | ✅ |
 | Tokenizer（byte-level BPE，token↔文本，`tokenizer.*` 元数据） | ✅ |
 | 模型权重加载（按名索引 + 配置解析 + 逐层权重组装） | ✅ |
+| 基础算子（gemv/gemm/softmax/RMSNorm/SwiGLU/RoPE/Attention/KV cache） | ✅（阶段⑤ 第 1 步） |
 
-运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器演示与权重加载演示。
+运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器演示、权重加载与基础算子演示。
 
 ---
 
@@ -55,7 +56,7 @@
 | **② 张量数据访问** | ✅ 全部完成（mmap / 类型系统 / 反量化） | — |
 | **③ Tokenizer** | ✅ 全部完成（byte-level BPE / 字节还原） | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | ✅ 全部完成（按名索引 / 配置 / 逐层组装） | embedding / norm / attn / ffn / ssm |
-| **⑤ Transformer 计算** ⬅ **下一步** | RMSNorm / RoPE / Attention(+KV cache) / SSM / SwiGLU | 矩阵乘、前向传播 |
+| **⑤ Transformer 计算** 🔄 进行中 | 算子层 ✅；待：Attention 层前向、SSM 混合层、全模型 | 矩阵乘、前向传播 |
 | **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
 ### 阶段 ②：张量数据访问 ✅
@@ -82,11 +83,24 @@
 - [x] 实测：24 层（6 个纯 Attention 层 + 18 个 SSM 混合层），hidden=1024，共享 embedding（无 output.weight）
 - [x] 单元测试 `test_model_weights`（不依赖模型，手建假模型验证索引/配置/组装/读取）
 
-### 阶段 ⑤：Transformer 计算 ⬅ 下一步
+### 阶段 ⑤：Transformer 计算 🔄 进行中
 
-- [ ] 基础算子：矩阵乘、RMSNorm、RoPE、Attention、SwiGLU
-- [ ] KV cache 管理
-- [ ] 前向传播（单层 → 多层 → 全模型）
+**第 1 步：基础算子层 ✅**
+
+- [x] `GGMLOps`：矩阵向量乘（gemv）/ 矩阵乘（gemm）/ softmax（含掩码）
+- [x] `GGMLNorm`：RMSNorm（含 eps）
+- [x] `GGMLFFN`：SwiGLU 前馈（gate/up/down 三投影）
+- [x] `GGMLRope`：NEOX RoPE（纯文本下等价 Qwen3.5 的 IMROPE 退化，旋转前 n_rot 维）
+- [x] `GGMLAttention`：KV cache + GQA 分组注意力（自回归场景）
+- [x] 单元测试 `test_model_ops`（不依赖模型，手算/性质断言验证全部算子）
+
+> 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN（指数全 1、尾数非 0），属模型文件本身数据，非解析错误；正常前向会产生 NaN 输出。
+
+**待做（下一步）**
+
+- [ ] Attention 层前向（Q/K/V 投影 + RoPE + KV cache + 输出投影，对照 qwen35 头布局）
+- [ ] SSM 混合层前向（conv1d + 状态空间递推，Mamba 风格）
+- [ ] 多层前向 → 全模型 logits
 
 ### 阶段 ⑥：生成引擎
 
@@ -108,8 +122,14 @@ gguf_cpp/
 │   ├── GGMLDequantize.hpp      # 反量化（F16/BF16/Q4_0/Q8_0 → float）
 │   ├── GGUFTokenizer.hpp       # 分词器（byte-level BPE，token↔文本）
 │   └── GGUFModelWeights.hpp    # 权重加载（按名索引 / 配置 / 逐层组装）
+├── include/model/              # 阶段⑤：Transformer 计算
+│   ├── GGMLOps.hpp             # 基础算子（gemv / gemm / softmax）
+│   ├── GGMLNorm.hpp            # RMSNorm
+│   ├── GGMLFFN.hpp             # SwiGLU 前馈
+│   ├── GGMLRope.hpp            # RoPE 旋转位置编码
+│   └── GGMLAttention.hpp       # KV cache + GQA 注意力
 ├── src/
-│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重
+│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子
 │   ├── core/
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
@@ -117,12 +137,20 @@ gguf_cpp/
 │   │   ├── GGMLDequantize.cpp  # 反量化实现
 │   │   ├── GGUFTokenizer.cpp   # 分词器实现
 │   │   └── GGUFModelWeights.cpp # 权重加载实现
+│   ├── model/                  # 阶段⑤ 实现
+│   │   ├── GGMLOps.cpp         # 基础算子实现
+│   │   ├── GGMLNorm.cpp        # RMSNorm 实现
+│   │   ├── GGMLFFN.cpp         # SwiGLU 实现
+│   │   ├── GGMLRope.cpp        # RoPE 实现
+│   │   └── GGMLAttention.cpp   # Attention + KV cache 实现
 │   └── test/
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
 │       ├── test_dequantize.cpp   # 反量化单元测试
 │       ├── test_tokenizer.cpp    # 分词器单元测试
-│       └── test_model_weights.cpp# 权重加载单元测试
+│       ├── test_tokenizer_ggml.cpp # 真实模型分词器验证
+│       ├── test_model_weights.cpp# 权重加载单元测试
+│       └── test_model_ops.cpp    # 基础算子单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
