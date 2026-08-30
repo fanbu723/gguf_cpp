@@ -156,39 +156,23 @@ std::vector<std::string> bpe_word(const std::string &word,
 // 元数据数组提取
 // ---------------------------------------------------------------------------
 
-bool extract_string_array(const MetadataValue &v, std::vector<std::string> &out) {
+// 从元数据 ARRAY 中提取指定类型的元素列表（模板：T = std::string / float / std::int32_t）
+// 若 value 不是 ARRAY 返回 false；ARRAY 中类型不匹配的元素会被跳过
+// @param v 元数据值（必须是 ARRAY）
+// @param out 输出参数，接收提取出的元素列表
+// @return 成功返回 true；v 不是 ARRAY 返回 false
+//
+// 说明：模板替代三个结构完全相同的重复函数（extract_string/float/int32_array），
+//       只在元数据类型不同；本函数仅在本翻译单元内实例化，定义放 .cpp 即可。
+template <typename T> bool extract_array(const MetadataValue &v, std::vector<T> &out) {
     const auto *arr = std::get_if<std::shared_ptr<ArrayValue>>(&v);
     if (!arr)
         return false;
     out.clear();
     out.reserve((*arr)->elements.size());
     for (const auto &e : (*arr)->elements)
-        if (const auto *s = std::get_if<std::string>(&e))
-            out.push_back(*s);
-    return true;
-}
-
-bool extract_float_array(const MetadataValue &v, std::vector<float> &out) {
-    const auto *arr = std::get_if<std::shared_ptr<ArrayValue>>(&v);
-    if (!arr)
-        return false;
-    out.clear();
-    out.reserve((*arr)->elements.size());
-    for (const auto &e : (*arr)->elements)
-        if (const auto *f = std::get_if<float>(&e))
-            out.push_back(*f);
-    return true;
-}
-
-bool extract_int32_array(const MetadataValue &v, std::vector<std::int32_t> &out) {
-    const auto *arr = std::get_if<std::shared_ptr<ArrayValue>>(&v);
-    if (!arr)
-        return false;
-    out.clear();
-    out.reserve((*arr)->elements.size());
-    for (const auto &e : (*arr)->elements)
-        if (const auto *i = std::get_if<std::int32_t>(&e))
-            out.push_back(*i);
+        if (const auto *val = std::get_if<T>(&e))
+            out.push_back(*val);
     return true;
 }
 
@@ -207,16 +191,16 @@ bool GGUFTokenizer::build_from(const GGUFModel &model) {
     };
 
     if (const auto *v = find("tokenizer.ggml.tokens")) {
-        if (!extract_string_array(*v, tokens))
+        if (!extract_array<std::string>(*v, tokens))
             return false;
     }
     if (const auto *v = find("tokenizer.ggml.scores"))
-        extract_float_array(*v, scores);
+        extract_array<float>(*v, scores);
     if (const auto *v = find("tokenizer.ggml.token_type"))
-        extract_int32_array(*v, token_types);
+        extract_array<std::int32_t>(*v, token_types);
     if (const auto *v = find("tokenizer.ggml.merges")) {
         std::vector<std::string> raw;
-        if (extract_string_array(*v, raw)) {
+        if (extract_array<std::string>(*v, raw)) {
             merges.clear();
             merges.reserve(raw.size());
             for (const auto &s : raw) {
@@ -268,17 +252,17 @@ std::string GGUFTokenizer::decode(std::int32_t id) const {
     // gpt2 风格字节级 BPE 的逆变换（参考 llama.cpp）：
     //   token_type：0 未定义 / 1 普通 / 2 未知 / 3 控制 / 4 用户定义 / 5 未用 / 6 字节
     switch (type) {
-        case 2: // 未知
-        case 3: // 控制（如 <|endoftext|>）
-        case 4: // 用户定义
-            return tok; // 特殊 token 原样输出
-        case 1: // 普通
-        case 6: // 字节
-            // 字节级 BPE 中词表里每个字符都是字节编码（如空格→"Ġ"），
-            // 因此整串逐码点还原成原始字节（注意不能只看 type==6）
-            return unicode_str_to_bytes(tok);
-        default: // 未用等 → 不输出
-            return {};
+    case 2:         // 未知
+    case 3:         // 控制（如 <|endoftext|>）
+    case 4:         // 用户定义
+        return tok; // 特殊 token 原样输出
+    case 1:         // 普通
+    case 6:         // 字节
+        // 字节级 BPE 中词表里每个字符都是字节编码（如空格→"Ġ"），
+        // 因此整串逐码点还原成原始字节（注意不能只看 type==6）
+        return unicode_str_to_bytes(tok);
+    default: // 未用等 → 不输出
+        return {};
     }
 }
 
