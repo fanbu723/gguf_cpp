@@ -226,7 +226,8 @@
 
 ```text
 gguf_cpp/
-├── CMakeLists.txt              # 构建（main / test_* 可执行 + MyLib 静态库）
+├── CMakeLists.txt              # 顶层构建（子目录聚合 + main / chat 可执行）
+├── CMakePresets.json           # 构建预设（debug / release 一键配置）
 ├── README.md                   # 本文档
 ├── include/core/
 │   ├── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
@@ -249,14 +250,16 @@ gguf_cpp/
 ├── src/
 │   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子 + 生成
 │   ├── chat_main.cpp           # 交互式多轮对话程序（chat）
-│   ├── core/
+│   ├── core/                   # gguf_core 静态库（GGUF 解析 + 数据访问 + 分词 + 权重）
+│   │   ├── CMakeLists.txt      # 库目标定义
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
 │   │   ├── GGMLType.cpp        # 类型表实现
 │   │   ├── GGMLDequantize.cpp  # 反量化实现
 │   │   ├── GGUFTokenizer.cpp   # 分词器实现
 │   │   └── GGUFModelWeights.cpp # 权重加载实现
-│   ├── model/                  # 阶段⑤⑥ 实现
+│   ├── model/                  # gguf_model 静态库（Transformer 计算 + 生成 + 对话）
+│   │   ├── CMakeLists.txt      # 库目标定义（依赖 gguf_core）
 │   │   ├── GGMLOps.cpp         # 基础算子实现
 │   │   ├── GGMLNorm.cpp        # RMSNorm 实现
 │   │   ├── GGMLFFN.cpp         # SwiGLU 实现
@@ -268,7 +271,8 @@ gguf_cpp/
 │   │   ├── GGMLSampler.cpp     # 采样器实现
 │   │   ├── GGMLGenerate.cpp    # 生成循环实现
 │   │   └── GGMLChat.cpp        # 多轮对话实现
-│   └── test/
+│   └── test/                   # 单元测试（CMakeLists 定义全部 test_* 目标）
+│       ├── CMakeLists.txt
 │       ├── test_gguf_parser.cpp  # 解析测试
 │       ├── test_verification.cpp # 类型系统验证
 │       ├── test_dequantize.cpp   # 反量化单元测试
@@ -282,10 +286,13 @@ gguf_cpp/
 │       ├── test_sampler.cpp      # 采样器单元测试
 │       ├── test_generate.cpp     # 生成循环单元测试
 │       └── test_chat.cpp         # 多轮对话单元测试
-│   └── bench/
-│       └── bench.cpp             # 性能测试（耗时 / 吞吐 / 内存）
+│   └── bench/                   # 性能测试（耗时 / 吞吐 / 内存）
+│       ├── CMakeLists.txt
+│       └── bench.cpp
+├── tools/                       # 调试 / 交叉验证工具（NaN 扫描、numpy 参考、logits A/B 对照）
+│   └── README.md               # 工具用法与依赖说明
 ├── scripts/
-│   └── chat.sh                  # 交互式对话启动脚本（自动构建后运行）
+│   └── chat.sh                  # 交互式对话启动脚本（Release 预设自动构建后运行）
 ├── doc/architecture.md         # 目标架构设计
 ├── build/                      # Debug 构建产物（git 忽略）
 └── build-release/              # Release 构建产物（git 忽略）
@@ -298,13 +305,14 @@ gguf_cpp/
 环境要求：CMake ≥ 3.20、支持 C++20 的编译器（GCC ≥ 10 / Clang ≥ 12）。
 
 ```bash
-# Debug 构建（开发/测试；前向较慢，无优化）
-cmake -S . -B build
-cmake --build build
+# 一键预设（推荐）：Debug 开发/测试、Release 推理/基准
+cmake --preset debug               # 配置 build/
+cmake --build build                # 构建 Debug
+ctest --preset debug               # 或 ctest --test-dir build --output-on-failure
 
-# Release 构建（推理/基准推荐，约快 3~4 倍）
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release -j
+cmake --preset release             # 配置 build-release/
+cmake --build build-release -j     # 构建 Release（约快 3~4 倍）
+ctest --preset release
 
 # 运行（加载模型，打印元数据/张量表/类型验证/mmap/反量化/分词/权重/算子/层前向）
 ./build/main
@@ -318,6 +326,8 @@ ctest --test-dir build --output-on-failure
 
 # 性能测试（各阶段耗时/吞吐/内存，默认 3 次全模型前向）
 ./build-release/bench
+
+# 调试/交叉验证工具（NaN 扫描、numpy 参考、logits A/B 对照等，见 tools/README.md）
 ```
 
 > `chat` 支持命令行传模型路径与最大生成 token 数；`main` / `bench` 的模型路径硬编码在源码顶部（默认 `~/llm/Qwen3.5-0.8B-clean-BF16.gguf`），可按需修改。
