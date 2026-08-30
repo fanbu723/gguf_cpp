@@ -11,15 +11,17 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# CTest：启用测试，并定义 BUILD_TESTING 选项（默认 ON，可用 -DBUILD_TESTING=OFF 关闭）
+include(CTest)
+
 add_executable(main
     src/main.cpp
     )
 
-add_executable(test_gguf_parser
-    src/test/test_gguf_parser.cpp
-    )
-
-add_library(MyLib STATIC src/core/GGUFLoader.cpp src/core/GGUFMmap.cpp src/core/GGMLType.cpp)
+add_library(MyLib STATIC 
+    src/core/GGUFLoader.cpp 
+    src/core/GGUFMmap.cpp 
+    src/core/GGMLType.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core
@@ -29,6 +31,18 @@ target_link_libraries(main PRIVATE
     MyLib
 )
 
-target_link_libraries(test_gguf_parser PRIVATE 
-    MyLib
-)
+# ---- 测试（可被 -DBUILD_TESTING=OFF 关闭）----
+if(BUILD_TESTING)
+    add_executable(test_gguf_parser
+        src/test/test_gguf_parser.cpp
+        )
+    target_link_libraries(test_gguf_parser PRIVATE MyLib)
+    add_test(NAME gguf_parser COMMAND test_gguf_parser)
+
+    add_executable(test_verification
+        src/test/test_verification.cpp
+        )
+    target_link_libraries(test_verification PRIVATE MyLib)
+    add_test(NAME type_system_verification COMMAND test_verification)
+endif()
+

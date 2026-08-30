@@ -122,8 +122,8 @@ cmake --build build
 # 运行（加载模型并打印元数据 / 张量表 / 类型验证 / mmap 读取）
 ./build/main
 
-# 运行测试
-./build/test_gguf_parser
+# 运行测试（CTest）
+ctest --test-dir build --output-on-failure
 ```
 
 > 模型路径目前硬编码在 `src/main.cpp` 的 `model_path` 中，后续改为命令行参数。
