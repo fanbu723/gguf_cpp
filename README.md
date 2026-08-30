@@ -240,6 +240,7 @@ gguf_cpp/
 │   └── GGMLChat.hpp            # 多轮对话封装
 ├── src/
 │   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化 + 分词 + 权重 + 算子 + 生成
+│   ├── chat_main.cpp           # 交互式多轮对话程序（chat）
 │   ├── core/
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
@@ -275,6 +276,8 @@ gguf_cpp/
 │       └── test_chat.cpp         # 多轮对话单元测试
 │   └── bench/
 │       └── bench.cpp             # 性能测试（耗时 / 吞吐 / 内存）
+├── scripts/
+│   └── chat.sh                  # 交互式对话启动脚本（自动构建后运行）
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
@@ -295,6 +298,13 @@ cmake --build build
 
 # 运行全部测试（CTest，当前 13 个：解析/类型/反量化/分词/真实分词/权重/算子/层前向/SSM/全模型/采样/生成/Chat）
 ctest --test-dir build --output-on-failure
+
+# 交互式多轮对话（User> 输入，/clear 清空，Ctrl+D 退出）
+./build/chat                # 或 ./scripts/chat.sh
+./scripts/chat.sh /path/to/model.gguf 200   # 指定模型与最大生成 token 数
+
+# 性能测试（各阶段耗时/吞吐/内存，默认 3 次全模型前向）
+./build/bench
 ```
 
 > 模型路径目前硬编码在 `src/main.cpp` 的 `model_path` 中，后续改为命令行参数。

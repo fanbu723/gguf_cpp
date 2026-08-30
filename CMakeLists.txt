@@ -52,6 +52,12 @@ add_executable(bench
     )
 target_link_libraries(bench PRIVATE MyLib)
 
+# 交互式多轮对话（./build/chat [model_path] [max_new_tokens]）
+add_executable(chat
+    src/chat_main.cpp
+    )
+target_link_libraries(chat PRIVATE MyLib)
+
 # ---- 测试（可被 -DBUILD_TESTING=OFF 关闭）----
 if(BUILD_TESTING)
     add_executable(test_gguf_parser
