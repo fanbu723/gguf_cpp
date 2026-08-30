@@ -19,7 +19,7 @@ add_executable(test_gguf_parser
     src/test/test_gguf_parser.cpp
     )
 
-add_library(MyLib STATIC src/core/GGUFLoader.cpp src/core/GGUFMmap.cpp)
+add_library(MyLib STATIC src/core/GGUFLoader.cpp src/core/GGUFMmap.cpp src/core/GGMLType.cpp)
 
 target_include_directories(MyLib PUBLIC 
     ${PROJECT_SOURCE_DIR}/include/core

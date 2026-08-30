@@ -28,7 +28,7 @@
 
 ## 当前进度
 
-**GGUF 解析器已完成**，已用真实模型（Qwen3.5-0.8B, 1.5GB）验证：
+已用真实模型（Qwen3.5-0.8B, 1.5GB）验证通过：
 
 | 功能 | 状态 |
 | :--- | :---: |
@@ -36,8 +36,10 @@
 | 元数据 KV 列表（含递归 ARRAY） | ✅ |
 | 张量信息表（name / shape / type / offset） | ✅ |
 | 张量数据区视图（延迟加载，零拷贝） | ✅ |
+| mmap 挂载数据区（`map_data` / `unmap_data`，RAII） | ✅ |
+| GGML 类型系统（`type_size` / `block_size` / 字节数） | ✅ |
 
-运行 `./build/gguf_parser` 可打印 42 条元数据、320 个张量、数据区信息。
+运行 `./build/main` 可打印元数据、张量表、类型系统验证与 mmap 读取结果。
 
 ---
 
@@ -47,18 +49,18 @@
 
 | 阶段 | 内容 | 关键点 |
 | :--- | :--- | :--- |
-| **② 张量数据访问** ⬅ **下一步** | mmap 挂载、GGML 类型系统、反量化 | 让 `data_ptr` 真正可用 |
+| **② 张量数据访问** ⬅ **下一步** | mmap ✅、类型系统 ✅、反量化 | 反量化 → float |
 | **③ Tokenizer** | vocab 加载、byte-level BPE、token↔文本 | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | Model 容器、按名查张量、组装各层权重 | embedding / norm / attn / ffn |
 | **⑤ Transformer 计算** | RMSNorm / RoPE / Attention(+KV cache) / SwiGLU | 矩阵乘、前向传播 |
 | **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
-### 阶段 ②：张量数据访问（当前待做）
+### 阶段 ②：张量数据访问（当前：反量化）
 
-- [ ] `GGUFLoader::map_data`：mmap 挂载数据区到 `model.data.data_ptr`
-- [ ] GGML 类型系统：`data_type` → 元素大小 / 块大小（`type_size` / `block_size` 表）
+- [x] `GGUFLoader::map_data`：mmap 挂载数据区到 `model.data.data_ptr`
+- [x] GGML 类型系统：`data_type` → 元素大小 / 块大小（`type_size` / `block_size` 表）
+- [x] 读取指定张量原始字节（按 `offset` 定位，已验证 offset 为**数据区相对偏移**）
 - [ ] 反量化：F16 / BF16 / Q4_0 / Q8_0 → `float`
-- [ ] 读取指定张量原始字节（按 `offset` 定位）
 
 ### 阶段 ③：Tokenizer
 
@@ -89,15 +91,20 @@
 
 ```text
 gguf_cpp/
-├── CMakeLists.txt              # 构建（gguf_parser 可执行 + MyLib 静态库）
+├── CMakeLists.txt              # 构建（main / test_gguf_parser 可执行 + MyLib 静态库）
 ├── README.md                   # 本文档
-├── include/gguf/
-│   └── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
+├── include/core/
+│   ├── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
+│   └── GGMLType.hpp            # GGML 类型描述（type_size / block_size）
 ├── src/
-│   ├── main.cpp                # 演示：加载并打印元数据 / 张量表 / 数据区
-│   └── gguf/
-│       └── GGUFLoader.cpp      # 解析实现（①→②→③→④）
-├── doc/                        # 设计文档
+│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap 读张量
+│   ├── core/
+│   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
+│   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
+│   │   └── GGMLType.cpp        # 类型表实现
+│   └── test/
+│       └── test_gguf_parser.cpp # 测试（main 的副本）
+├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
 
@@ -112,8 +119,11 @@ gguf_cpp/
 cmake -S . -B build
 cmake --build build
 
-# 运行（加载模型并打印元数据 / 张量表 / 数据区）
-./build/gguf_parser
+# 运行（加载模型并打印元数据 / 张量表 / 类型验证 / mmap 读取）
+./build/main
+
+# 运行测试
+./build/test_gguf_parser
 ```
 
 > 模型路径目前硬编码在 `src/main.cpp` 的 `model_path` 中，后续改为命令行参数。
@@ -143,6 +153,11 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ 数据区偏移 + 数据区大小 = 文件总大小（`10961669 + 1505783067 = 1516744736`）精确吻合
 - ✅ 元数据 ARRAY 递归解析正确（`general.tags = [STRING x1]`）
 - ✅ 张量 `element_count()` 与维度乘积一致（`1024 × 248320 = 254279680`）
+
+**GGML 类型系统验证**：
+- ✅ 类型反推（从文件布局实测）：`type=0(F32) 4字节/元素`、`type=30(BF16) 2字节/元素`
+- ✅ 张量数据累加 `1505783040` + 尾部填充 `27` = 数据区 `1505783067`，完全吻合
+- ✅ 关键认知：GGUF 张量 `offset` 是**相对数据区起点**的偏移（而非文件头）
 
 ---
 
@@ -187,5 +202,5 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 
 ---
 
-*本文档遵循 GGUF v3 规范。详细架构设计见 `doc/GGUF文件格式处理系统.md`。*
+*本文档遵循 GGUF v3 规范。目标架构设计见 `doc/architecture.md`。*
  
