@@ -404,7 +404,8 @@ int main() {
                 for (int i = 0; i < 5 && i < static_cast<int>(logits.size()); ++i)
                     std::cout << logits[static_cast<std::size_t>(i)] << (i + 1 < 5 ? ", " : "");
                 std::cout << "  全有限: "
-                          << (fin ? "✅" : "❌（NaN " + std::to_string(nan_cnt) + " 个，模型权重含 NaN）")
+                          << (fin ? "✅"
+                                  : "❌（NaN " + std::to_string(nan_cnt) + " 个，模型权重含 NaN）")
                           << std::endl;
             }
         } else {

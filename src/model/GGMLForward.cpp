@@ -70,8 +70,8 @@ void GGMLForward(const GGUFModelWeights &w, GGMLModelState &state, int token, in
         float sum = 0.0f;
         for (int i = 0; i < hidden; ++i) {
             float e = 0.0f;
-            GGMLDequantizeOne(embd->type, embd->data,
-                              static_cast<std::uint64_t>(v) * hidden + i, e);
+            GGMLDequantizeOne(embd->type, embd->data, static_cast<std::uint64_t>(v) * hidden + i,
+                              e);
             sum += e * hn[static_cast<std::size_t>(i)];
         }
         logits[static_cast<std::size_t>(v)] = sum;
