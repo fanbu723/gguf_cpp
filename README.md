@@ -38,8 +38,9 @@
 | 张量数据区视图（延迟加载，零拷贝） | ✅ |
 | mmap 挂载数据区（`map_data` / `unmap_data`，RAII） | ✅ |
 | GGML 类型系统（`type_size` / `block_size` / 字节数） | ✅ |
+| 反量化（F16 / BF16 / Q4_0 / Q8_0 → float） | ✅ |
 
-运行 `./build/main` 可打印元数据、张量表、类型系统验证与 mmap 读取结果。
+运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取与反量化结果。
 
 ---
 
@@ -49,18 +50,18 @@
 
 | 阶段 | 内容 | 关键点 |
 | :--- | :--- | :--- |
-| **② 张量数据访问** ⬅ **下一步** | mmap ✅、类型系统 ✅、反量化 | 反量化 → float |
-| **③ Tokenizer** | vocab 加载、byte-level BPE、token↔文本 | 解析 `tokenizer.*` 元数据 |
+| **② 张量数据访问** | ✅ 全部完成（mmap / 类型系统 / 反量化） | — |
+| **③ Tokenizer** ⬅ **下一步** | vocab 加载、byte-level BPE、token↔文本 | 解析 `tokenizer.*` 元数据 |
 | **④ 模型权重加载** | Model 容器、按名查张量、组装各层权重 | embedding / norm / attn / ffn |
 | **⑤ Transformer 计算** | RMSNorm / RoPE / Attention(+KV cache) / SwiGLU | 矩阵乘、前向传播 |
 | **⑥ 生成引擎** | Sampler(top-k/p/temp)、自回归循环、Chat | 预填充 + 解码 |
 
-### 阶段 ②：张量数据访问（当前：反量化）
+### 阶段 ②：张量数据访问 ✅
 
 - [x] `GGUFLoader::map_data`：mmap 挂载数据区到 `model.data.data_ptr`
 - [x] GGML 类型系统：`data_type` → 元素大小 / 块大小（`type_size` / `block_size` 表）
 - [x] 读取指定张量原始字节（按 `offset` 定位，已验证 offset 为**数据区相对偏移**）
-- [ ] 反量化：F16 / BF16 / Q4_0 / Q8_0 → `float`
+- [x] 反量化：F16 / BF16 / Q4_0 / Q8_0 → `float`（含单元测试）
 
 ### 阶段 ③：Tokenizer
 
@@ -95,15 +96,19 @@ gguf_cpp/
 ├── README.md                   # 本文档
 ├── include/core/
 │   ├── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
-│   └── GGMLType.hpp            # GGML 类型描述（type_size / block_size）
+│   ├── GGMLType.hpp            # GGML 类型描述（type_size / block_size）
+│   └── GGMLDequantize.hpp      # 反量化（F16/BF16/Q4_0/Q8_0 → float）
 ├── src/
-│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap 读张量
+│   ├── main.cpp                # 演示：解析 + 类型验证 + mmap + 反量化
 │   ├── core/
 │   │   ├── GGUFLoader.cpp      # 解析实现（①→②→③→④）
 │   │   ├── GGUFMmap.cpp        # mmap 模块（map_data / unmap_data）
-│   │   └── GGMLType.cpp        # 类型表实现
+│   │   ├── GGMLType.cpp        # 类型表实现
+│   │   └── GGMLDequantize.cpp  # 反量化实现
 │   └── test/
-│       └── test_gguf_parser.cpp # 测试（main 的副本）
+│       ├── test_gguf_parser.cpp  # 解析测试
+│       ├── test_verification.cpp # 类型系统验证
+│       └── test_dequantize.cpp   # 反量化单元测试
 ├── doc/architecture.md         # 目标架构设计
 └── build/                      # 构建产物
 ```
@@ -158,6 +163,11 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ 类型反推（从文件布局实测）：`type=0(F32) 4字节/元素`、`type=30(BF16) 2字节/元素`
 - ✅ 张量数据累加 `1505783040` + 尾部填充 `27` = 数据区 `1505783067`，完全吻合
 - ✅ 关键认知：GGUF 张量 `offset` 是**相对数据区起点**的偏移（而非文件头）
+
+**反量化验证**：
+- ✅ 转换自检：`GGMLBF16ToFloat(0x3F80)=1.0`、`(0x4000)=2.0`
+- ✅ F32 反量化 == 直接读，交叉验证一致
+- ✅ 反量化单元测试 17 项（BF16 / F16 / Q4_0 / Q8_0 / 边界）全部通过
 
 ---
 

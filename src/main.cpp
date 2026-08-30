@@ -1,11 +1,13 @@
 
 #include <algorithm>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <string>
 #include <utility>
 
+#include "GGMLDequantize.hpp"
 #include "GGMLType.hpp"
 #include "GGUFLoader.hpp"
 
@@ -136,6 +138,60 @@ int main() {
         std::cout << "  已 munmap 释放（data_ptr 已清空）" << std::endl;
     } else {
         std::cerr << "  ❌ map_data 失败" << std::endl;
+    }
+
+    std::cout << "\n=== 反量化演示（GGMLDequantize）===" << std::endl;
+    if (GGUFLoader::map_data(model_path, model)) {
+        // 找一个 BF16 张量（type == 30，本模型校准）反量化
+        const GGUFTensorInfo *bf16 = nullptr;
+        for (const auto &t : model.tensors) {
+            if (t.data_type == 30) {
+                bf16 = &t;
+                break;
+            }
+        }
+        if (bf16) {
+            const std::uint8_t *raw = model.data.data_ptr + bf16->offset;
+            std::cout << "  BF16 张量: " << bf16->name << "  elements=" << bf16->element_count()
+                      << std::endl;
+            // 转换函数自检：BF16 0x3F80=1.0、0x4000=2.0
+            std::cout << "  转换自检: GGMLBF16ToFloat(0x3F80)=" << GGMLBF16ToFloat(0x3F80)
+                      << "  (0x4000)=" << GGMLBF16ToFloat(0x4000) << std::endl;
+            std::cout << "  反量化前 8 个值: ";
+            const std::size_t n = std::min<std::size_t>(bf16->element_count(), 8);
+            for (std::size_t i = 0; i < n; ++i) {
+                float v = 0;
+                GGMLDequantizeOne(bf16->data_type, raw, i, v);
+                std::uint16_t bits = 0;
+                std::memcpy(&bits, raw + i * 2, 2);
+                std::cout << v << "(0x" << std::hex << bits << std::dec << ")"
+                          << (i + 1 < n ? ", " : "");
+            }
+            std::cout << std::endl;
+        }
+
+        // 交叉验证：F32 张量 "直接读" vs "反量化" 应完全一致
+        const GGUFTensorInfo *f32 = nullptr;
+        for (const auto &t : model.tensors) {
+            if (t.data_type == 0) {
+                f32 = &t;
+                break;
+            }
+        }
+        if (f32) {
+            const std::uint8_t *raw = model.data.data_ptr + f32->offset;
+            float deq[8] = {};
+            GGMLDequantize(f32->data_type, raw, 8, deq);
+            const float *direct = reinterpret_cast<const float *>(raw);
+            bool same = true;
+            for (std::size_t i = 0; i < 8; ++i)
+                if (deq[i] != direct[i])
+                    same = false;
+            std::cout << "  F32 交叉验证(反量化==直接读): " << (same ? "✅ 一致" : "❌ 不一致")
+                      << std::endl;
+        }
+
+        GGUFLoader::unmap_data(model);
     }
     return 0;
 }
