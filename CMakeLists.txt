@@ -46,6 +46,12 @@ target_link_libraries(main PRIVATE
     MyLib
 )
 
+# 性能测试（./build/bench [forward_runs]）
+add_executable(bench
+    src/bench/bench.cpp
+    )
+target_link_libraries(bench PRIVATE MyLib)
+
 # ---- 测试（可被 -DBUILD_TESTING=OFF 关闭）----
 if(BUILD_TESTING)
     add_executable(test_gguf_parser

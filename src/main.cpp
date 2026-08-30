@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "GGMLDequantize.hpp"
 #include "GGMLChat.hpp"
+#include "GGMLDequantize.hpp"
 #include "GGMLForward.hpp"
 #include "GGMLGenerate.hpp"
 #include "GGMLNorm.hpp"
