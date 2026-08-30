@@ -74,7 +74,7 @@
 | **⑥ 生成引擎** | ✅ 全部完成（Sampler / 生成循环 / Chat） | 预填充 + 解码 |
 
 > 🎉 六阶段全部完成：完整的 GGUF 加载 → 解析 → 分词 → 权重 → Transformer → 生成链路已打通。
-> 由于当前模型文件 FFN 权重含 0.3% NaN，端到端输出为 NaN；换干净的 GGUF 后即可实际生成。
+> 已用真实模型 Qwen3.5-0.8B 验证端到端生成（输出与 llama.cpp 逐 token logits 一致），详见「关键认知与踩坑」。
 
 ### 阶段 ②：张量数据访问 ✅
 
@@ -118,7 +118,7 @@
 - [x] `GGMLTransformer`：完整层前向（RMSNorm → Q+gate 联合投影 → Q/K 拆分 → Q/K RMSNorm → RoPE → KV cache → GQA → ×sigmoid(gate) → 输出投影 → 残差 → post RMSNorm → SwiGLU FFN → 残差）
 - [x] 头布局校准：attn_q 是「联合 Q+gate 投影」（2×head_dim×n_head），head_dim=key_length=256，attn_output 输入 = n_head×head_dim = 2048
 - [x] 单元测试 `test_transformer`（假权重验证结构/确定性/维度/RoPE 位置影响）
-- [x] 真实模型：blk.3 层前向跑通（输出 NaN 系模型权重本身含 NaN）
+- [x] 真实模型：blk.3 层前向跑通，输出有限且与 llama.cpp 对照一致
 
 **第 3 步：SSM 混合层前向 ✅**
 
@@ -126,14 +126,14 @@
 - [x] `GGMLDeltaNetStep`：核心递推 `S' = φ·S + β·k⊗(v − φ·Sᵀk)`，`o = Sᵀq/√d_state`（手算验证一致）
 - [x] 状态持久：S[16][128][128] 与 conv 历史 [3][6144] 跨 token 持久（类似 KV cache）
 - [x] 单元测试 `test_ssm`（手算 delta net + 层结构/确定性/状态累积/conv 推进）
-- [x] 真实模型：blk.0 SSM 层前向跑通（输出 NaN 系模型权重本身含 NaN）
+- [x] 真实模型：blk.0 SSM 层前向跑通，输出与独立 numpy 参考实现逐值一致
 
 **第 4 步：全模型前向 ✅**
 
 - [x] `GGMLForward`：token_embd → 24 层混合循环（`is_ssm()` / `is_attention()` 分发）→ output_norm → 共享 embedding 投影得 logits
 - [x] `GGMLModelState`：每层各一份 KV cache / SSM 状态，跨 token 持久（自回归解码准备）
 - [x] 单元测试 `test_forward`（2 层假模型：logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
-- [x] 真实模型：完整 24 层前向 → logits[248320]（全 NaN 系模型权重本身含 NaN）
+- [x] 真实模型：完整 24 层前向 → logits[248320]，与 llama.cpp 逐 token 对照一致（误差 ≤0.05）
 
 ### 阶段 ⑥：生成引擎 🔄 进行中
 
@@ -148,14 +148,14 @@
 
 - [x] `GGMLGenerate`：预填充（逐 token 前向更新状态）→ 循环 forward+sample → eos 提前停止
 - [x] 单元测试 `test_generate`（2 层假模型：生成数量 / 确定性 / eos 停止）
-- [x] 真实模型演示：检测到 logits 全 NaN 时安全提示（不崩溃），建议换干净 GGUF
+- [x] 真实模型演示：自回归生成正常文本（“Hello, world!” → 思考式回复）
 
 **第 3 步：Chat 多轮对话 ✅**
 
 - [x] `GGMLChat`：多轮对话封装（Qwen 风格模板 + 历史文本管理）
 - [x] 每轮拼接历史 → 编码 → 生成 → 追加回复；`clear()` 重置会话
 - [x] 单元测试 `test_chat`（假模型 + 假分词器：回复有效 / 多轮累积 / clear）
-- [x] 真实模型演示：Chat 初始化正常（模型 NaN 时提示换干净 GGUF）
+- [x] 真实模型演示：Chat 端到端生成连贯回复（Qwen 风格思考 + 正文）
 
 ---
 
@@ -167,19 +167,21 @@
 ./build/bench [forward_runs]   # forward_runs：全模型前向次数，默认 3，取平均
 ```
 
-**对 Qwen3.5-0.8B-BF16.gguf 实测**（单线程，2 次全模型前向取平均）：
+**对 Qwen3.5-0.8B-BF16.gguf 实测**（Release 构建，单线程，2 次全模型前向取平均）：
 
 | 项目 | 耗时 |
 | :--- | :--- |
-| 解析（load） | 380 ms |
+| 解析（load） | 38.6 ms |
 | mmap 映射 | ~0 ms（延迟映射） |
-| Tokenizer 构建 | 232 ms |
-| 权重索引 | 0.5 ms |
-| 单层 SSM 前向（含反量化） | 303 ms |
-| 单层 Attention 前向（含反量化） | 226 ms |
-| 全模型前向（24 层 + logits） | 5.79 s / token |
-| 吞吐 | ~0.17 tokens/s |
-| 常驻内存（VmRSS） | 1653 MB |
+| Tokenizer 构建 | 69.7 ms |
+| 权重索引 | 0.1 ms |
+| 单层 SSM 前向（含反量化） | 47.0 ms |
+| 单层 Attention 前向（含反量化） | 39.2 ms |
+| 全模型前向（24 层 + logits） | 1.56 s / token |
+| 吞吐 | ~0.64 tokens/s |
+| 常驻内存（VmRSS） | 1688 MB |
+
+> 注意：Debug 构建无优化，前向慢约 3~4 倍（~5.8 s/token）。跑推理/基准请用 Release 构建：`cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release && cmake --build build-release -j`。
 
 **瓶颈分析**：全模型前向每次**重新反量化所有权重**（BF16→float，18 个 SSM 层 + 6 个 Attention 层），且 logits 逐元素反量化 embedding（vocab×hidden ≈ 2.5 亿次）。这是纯教学实现的代价。
 
@@ -192,23 +194,29 @@
 本项目从头踩坑得到的经验，汇总如下：
 
 **文件格式**
-- GGUF 张量 `offset` 是**相对数据区起点**的偏移（非文件头）；数据区大小 = 张量累加 + 尾部填充
+- GGUF 张量 `offset` 是**相对数据区起点**的偏移（非文件头）；数据区从 **32 字节对齐**处开始（`GGUF_DEFAULT_ALIGNMENT=32`），解析时必须把 `tellg()` 向上对齐，否则所有张量数据会整体错位（见下方「三个重要修复」）
 - GGUF 权重按**列主序**存储（`dims=[in, out]`，in 最内层），等价行主序 `[out, in]`，`gemv` 可直接用
 - 本模型 `type=30` 实测是 **BF16**（2 字节/元素），标准 ggml 该编号是 IQ1_S —— 类型表必须按实际模型校准
 
 **Tokenizer**
 - 字节级 BPE 中空格等以 `Ġ`(U+0120) 存于词表，可能标记为 `token_type=1`(NORMAL) 而非 6(BYTE)
 - decode 必须**逐码点字节还原**（不能只看 type==6），否则空格还原不出来
+- **特殊 token（如 `<|im_start|>`、`<|im_end|>`）在词表里是单一 token（type 2/3/4），encode 必须在 BPE 之前整体匹配并映射为单一 id**，否则会被字节 BPE 拆散成多个子 token（本项目已修复）
 
 **qwen35 架构（SSM + Attention 混合）**
 - 24 层：每 4 层一个纯 Attention 层（blk.3/7/11/15/19/23），其余 18 层为 SSM 混合层；共享 embedding
-- 纯 Attention 层的 `attn_q` 是**联合 Q+gate 投影**：输出 `2×head_dim×n_head`，前半 Q 后半 gate（sigmoid 后相乘）；`head_dim=key_length=256`
+- 纯 Attention 层的 `attn_q` 是**联合 Q+gate 投影**：输出 `2×head_dim×n_head`，**按 head 交错**存储（每 head 的 `2×head_dim` 块内前半 Q、后半 gate，sigmoid 后相乘）；`head_dim=key_length=256`
 - 纯文本下 IMROPE 退化为标准 NEOX RoPE（旋转前 n_rot 维）
-- SSM 层是 **Gated Delta Net**：`S' = φ·S + β·k⊗(v − φ·Sᵀk)`，`o = Sᵀq/√d_state`；conv1d 无 bias、q/k 用 `max(‖x‖,ε)` L2 归一化
+- SSM 层是 **Gated Delta Net**：`S' = φ·S + β·k⊗(v − φ·Sᵀk)`，`o = Sᵀq/√d_state`；`ssm_norm` 是 `[d_state]` 的**共享 gamma**（跨 head 广播）；conv1d 无 bias、q/k 用 `max(‖x‖,ε)` L2 归一化
 
-**⚠️ 模型文件问题**
-- 该 Qwen3.5-0.8B-BF16.gguf 的 FFN 权重含约 0.3% 的**真 BF16 NaN**（指数全 1、尾数非 0），经 24 层传播后全模型 logits 全为 NaN
-- 这是模型文件本身的数据问题（非解析/实现 bug）；要做端到端生成需换官方/干净模型
+**✅ 三个重要修复（2026-08，与 llama.cpp 逐 token 对照定位）**
+项目曾误判「模型 FFN 权重含 NaN 无法生成」。用 llama.cpp 对同一 GGUF 对照推理 + 独立 numpy 参考实现逐层比对后，确认**模型文件完全干净**，根因是项目自身的三个实现 bug：
+
+1. **解析器数据区 32 字节对齐**：数据区从 32 字节对齐处开始。原 `load_data_region` 直接取 `tellg()`，当张量表结束位置未对齐时（本模型差 27 字节）所有张量数据整体错位读取 → 读出约 222 万个**伪 NaN**。修复：`data_offset` 向上对齐到 32。
+2. **SSM gated norm 越界读**：`ssm_norm.weight` 是 `[d_state]=[128]` 的**共享 gamma**，原代码按 `[n_group][d_state]` 索引 → h≥1 时越界读堆内存 → 隐藏态爆炸（~1e28）且结果非确定。修复：所有 head 共用同一份 gamma。
+3. **Attention Q/gate 切分布局**：联合 QG 投影输出**按 head 交错**，原代码按「先全部 Q 再全部 gate」块状切分 → Q/gate 错位 → 输出错误但稳定。修复：按 `qg[h*2*head_dim + d]` 交错读取。
+
+修复后：单 token 与 12-token 模板的 logits 均与 llama.cpp 逐项一致（误差 ≤0.05，浮点精度级），端到端生成输出正常。
 
 **测试经验**
 - 假模型权重若**全用相同值**会退化（输出对输入/历史只有浮点噪声级差异，断言易误判）；应填有区分度的值
@@ -279,7 +287,8 @@ gguf_cpp/
 ├── scripts/
 │   └── chat.sh                  # 交互式对话启动脚本（自动构建后运行）
 ├── doc/architecture.md         # 目标架构设计
-└── build/                      # 构建产物
+├── build/                      # Debug 构建产物（git 忽略）
+└── build-release/              # Release 构建产物（git 忽略）
 ```
 
 ---
@@ -289,9 +298,13 @@ gguf_cpp/
 环境要求：CMake ≥ 3.20、支持 C++20 的编译器（GCC ≥ 10 / Clang ≥ 12）。
 
 ```bash
-# 构建
+# Debug 构建（开发/测试；前向较慢，无优化）
 cmake -S . -B build
 cmake --build build
+
+# Release 构建（推理/基准推荐，约快 3~4 倍）
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release -j
 
 # 运行（加载模型，打印元数据/张量表/类型验证/mmap/反量化/分词/权重/算子/层前向）
 ./build/main
@@ -300,14 +313,14 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 
 # 交互式多轮对话（User> 输入，/clear 清空，Ctrl+D 退出）
-./build/chat                # 或 ./scripts/chat.sh
-./scripts/chat.sh /path/to/model.gguf 200   # 指定模型与最大生成 token 数
+./build-release/chat                 # 或 ./scripts/chat.sh
+./build-release/chat <model> <n>     # 指定模型路径与最大生成 token 数
 
 # 性能测试（各阶段耗时/吞吐/内存，默认 3 次全模型前向）
-./build/bench
+./build-release/bench
 ```
 
-> 模型路径目前硬编码在 `src/main.cpp` 的 `model_path` 中，后续改为命令行参数。
+> `chat` 支持命令行传模型路径与最大生成 token 数；`main` / `bench` 的模型路径硬编码在源码顶部（默认 `~/llm/Qwen3.5-0.8B-clean-BF16.gguf`），可按需修改。
 
 代码风格：clang-format（规则见 `.clang-format`），VS Code 已配置保存时自动格式化。
 
@@ -327,17 +340,17 @@ ctest --test-dir build --output-on-failure
 ...
 token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 ...
-数据区偏移: 10961669  总大小: 1505783067 字节 (1436.03 MiB)
+数据区偏移: 10961696  总大小: 1505783040 字节 (1436.00 MiB)
 ```
 
 **校验点**：
-- ✅ 数据区偏移 + 数据区大小 = 文件总大小（`10961669 + 1505783067 = 1516744736`）精确吻合
+- ✅ 数据区偏移（32 字节对齐后）+ 数据区大小 = 文件总大小（`10961696 + 1505783040 = 1516744736`）精确吻合
 - ✅ 元数据 ARRAY 递归解析正确（`general.tags = [STRING x1]`）
 - ✅ 张量 `element_count()` 与维度乘积一致（`1024 × 248320 = 254279680`）
 
 **GGML 类型系统验证**：
 - ✅ 类型反推（从文件布局实测）：`type=0(F32) 4字节/元素`、`type=30(BF16) 2字节/元素`
-- ✅ 张量数据累加 `1505783040` + 尾部填充 `27` = 数据区 `1505783067`，完全吻合
+- ✅ 张量数据累加 `1505783040` = 数据区大小（32 对齐后无填充），完全吻合
 - ✅ 关键认知：GGUF 张量 `offset` 是**相对数据区起点**的偏移（而非文件头）
 
 **反量化验证**：
@@ -351,9 +364,9 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ SSM 层单测：delta net 手算一致 + 层结构 / 确定性 / 状态累积 / conv 推进
 - ✅ 全模型前向单测 6 项（logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
 - ✅ 生成引擎单测：sampler 各模式 + 生成循环（数量 / 确定性 / eos 停止）
-- ✅ 真实模型完整 24 层前向 → logits[248320]（全 NaN 系模型权重本身含 NaN）
-- ✅ 真实模型 `blk.3`（纯 Attention 层）与 `blk.0`（SSM 层）前向均跑通，无越界
-- ⚠️ 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN，导致真实前向输出 NaN（属模型文件本身数据，非实现 bug）
+- ✅ 真实模型完整 24 层前向 → logits[248320]（有限，与 llama.cpp 对照逐项一致）
+- ✅ 真实模型 `blk.3`（纯 Attention 层）与 `blk.0`（SSM 层）前向与独立 numpy 参考实现逐值一致
+- ✅ 端到端生成：`echo "Hello, world!" | ./build-release/chat <model> 64` 输出连贯思考式回复（与 llama.cpp 输出对照一致）
 
 ---
 

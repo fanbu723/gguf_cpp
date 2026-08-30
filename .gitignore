@@ -1,5 +1,10 @@
-temp/
+# 构建产物
 build/
+build-release/
 
+# 临时调试脚本（不纳入版本库）
+temp/
+
+# IDE / 工具
 .vscode/
 .cache/

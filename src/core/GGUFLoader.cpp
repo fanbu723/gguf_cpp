@@ -191,7 +191,15 @@ bool GGUFLoader::load_tensor_info(std::istream &is, std::uint64_t count,
 // ----------------------------------------------------------------------------
 
 bool GGUFLoader::load_data_region(std::istream &is, GGUFTensorData &data) {
+    // GGUF 规范：张量数据区从 32 字节对齐处开始（GGUF_DEFAULT_ALIGNMENT = 32）。
+    // 张量信息表结束位置（tellg）未必在 32 边界上，需向上补齐到下一个对齐点，
+    // 否则所有张量数据会整体错位读取（产生伪 NaN / 乱码）。
+    constexpr std::uint64_t GGUF_ALIGN = 32;
     data.data_offset = static_cast<std::uint64_t>(is.tellg());
+    const std::uint64_t rem = data.data_offset % GGUF_ALIGN;
+    if (rem != 0)
+        data.data_offset += GGUF_ALIGN - rem;
+
     is.seekg(0, std::ios::end);
     const auto file_end = is.tellg();
     if (is.fail() || data.data_offset > static_cast<std::uint64_t>(file_end)) {

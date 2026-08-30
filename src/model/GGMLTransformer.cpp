@@ -57,14 +57,16 @@ void GGMLTransformerAttentionBlock(const GGUFBlockWeights &w, const GGUFModelCon
     // 2. 联合 Q+gate 投影：qg = x_norm · attn_qᵀ（[2*head_dim*n_head]）
     GGMLGemmVec(q_w.data(), xn.data(), qg.data(), 2 * head_dim * n_head, hidden);
 
-    // 3. 拆分 Q（前一半）与 gate（后一半），Q 按头 reshape
-    //    qg 布局：[n_head*head_dim 个 Q] + [n_head*head_dim 个 gate]
+    // 3. 拆分 Q（前半）与 gate（后半），Q 按头 reshape
+    //    ⚠️ 联合 QG 投影的输出是【按 head 交错】存储的（llama.cpp 与 HF 转换一致）：
+    //       qg[h*2*head_dim + d] = Q(h,d)，qg[h*2*head_dim + head_dim + d] = gate(h,d)。
+    //       不能按「先全部 Q 再全部 gate」块状切分，否则 Q/gate 错位 → 输出错误。
     for (int h = 0; h < n_head; ++h)
         for (int d = 0; d < head_dim; ++d) {
             qbuf[static_cast<std::size_t>(h) * head_dim + d] =
-                qg[static_cast<std::size_t>(h) * head_dim + d];
+                qg[static_cast<std::size_t>(h) * 2 * head_dim + d];
             gate[static_cast<std::size_t>(h) * head_dim + d] =
-                qg[static_cast<std::size_t>(n_head * head_dim + h * head_dim + d)];
+                qg[static_cast<std::size_t>(h) * 2 * head_dim + head_dim + d];
         }
 
     // 4. Q 归一化 + RoPE

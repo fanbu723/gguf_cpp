@@ -9,8 +9,8 @@
  *
  * 用法：./build/chat [model_path] [max_new_tokens]
  *
- * 若模型 logits 含 NaN（如本项目 Qwen3.5-0.8B-BF16.gguf 的 FFN 权重含 0.3% NaN），
- * 会检测并提示换干净 GGUF，避免采样崩溃。
+ * 默认模型为本项目自转的干净 GGUF（Qwen3.5-0.8B-clean-BF16.gguf）。
+ * 启动时探测 logits 是否有限（若模型含 NaN 会提示换干净 GGUF，避免采样崩溃）。
  */
 
 #include <cmath>
@@ -25,7 +25,7 @@
 #include "GGUFTokenizer.hpp"
 
 namespace {
-std::string default_model = "/home/dongfan/llm/unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-BF16.gguf";
+std::string default_model = "/home/dongfan/llm/Qwen3.5-0.8B-clean-BF16.gguf";
 
 // 探测模型 logits 是否可用（全 NaN 则不可对话）
 bool model_has_nan(const GGUFModelWeights &w) {

@@ -1,5 +1,6 @@
 #include "GGUFTokenizer.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -240,6 +241,17 @@ void GGUFTokenizer::rebuild_index() {
     ranks_.clear();
     for (std::size_t i = 0; i < merges.size(); ++i)
         ranks_[merges[i].first + " " + merges[i].second] = static_cast<int>(i);
+
+    // 收集特殊 token（type 2=未知 / 3=控制 / 4=用户定义），按长度降序，
+    // 使 encode 扫描时"先匹配到的最长"即为最优（<|im_start|> 优先于 <| 等子串）。
+    special_tokens_.clear();
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+        const std::int32_t type = i < token_types.size() ? token_types[i] : 1;
+        if (type == 2 || type == 3 || type == 4)
+            special_tokens_.push_back(tokens[i]);
+    }
+    std::sort(special_tokens_.begin(), special_tokens_.end(),
+              [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
 }
 
 std::string GGUFTokenizer::decode(std::int32_t id) const {
@@ -266,11 +278,12 @@ std::string GGUFTokenizer::decode(std::int32_t id) const {
     }
 }
 
-std::vector<std::int32_t> GGUFTokenizer::encode(const std::string &text) const {
-    std::vector<std::int32_t> ids;
-    const std::string encoded = bytes_to_unicode_str(text); // 1. 字节编码
-    const auto words = split_words(encoded);                // 2. 分词
-    for (const auto &w : words) {                           // 3. 每词 BPE
+// 对一段普通文本做字节级 BPE（编码 → 切词 → 贪心 merge）
+void GGUFTokenizer::append_encode_chunk(std::vector<std::int32_t> &ids,
+                                        const std::string &chunk) const {
+    const std::string encoded = bytes_to_unicode_str(chunk); // 字节编码
+    const auto words = split_words(encoded);                 // 分词
+    for (const auto &w : words) {                            // 每词 BPE
         const auto pieces = bpe_word(w, ranks_);
         for (const auto &p : pieces) {
             const auto it = token_to_id_.find(p);
@@ -278,5 +291,38 @@ std::vector<std::int32_t> GGUFTokenizer::encode(const std::string &text) const {
                 ids.push_back(it->second);
         }
     }
+}
+
+std::vector<std::int32_t> GGUFTokenizer::encode(const std::string &text) const {
+    std::vector<std::int32_t> ids;
+
+    // 1. 特殊 token（type 2/3/4，如 <|im_start|>）在字节编码/BPE 之前整体匹配，
+    //    直接映射到它的单一 token id——否则会被字节级 BPE 拆成多个子 token。
+    std::string chunk; // 累积的普通文本片段
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::string *best = nullptr;      // 匹配到的最长特殊 token
+        for (const auto &s : special_tokens_) { // 已按长度降序
+            if (text.compare(i, s.size(), s) == 0) {
+                best = &s;
+                break; // 第一个匹配即最长
+            }
+        }
+        if (best) {
+            if (!chunk.empty()) { // 先编码普通片段
+                append_encode_chunk(ids, chunk);
+                chunk.clear();
+            }
+            const auto it = token_to_id_.find(*best);
+            if (it != token_to_id_.end())
+                ids.push_back(it->second);
+            i += best->size();
+        } else {
+            chunk.push_back(text[i]);
+            ++i;
+        }
+    }
+    if (!chunk.empty())
+        append_encode_chunk(ids, chunk);
     return ids;
 }

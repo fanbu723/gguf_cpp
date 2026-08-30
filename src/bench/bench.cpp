@@ -28,7 +28,7 @@
 #include "GGUFTokenizer.hpp"
 
 namespace {
-std::string model_path = "/home/dongfan/llm/unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-BF16.gguf";
+std::string model_path = "/home/dongfan/llm/Qwen3.5-0.8B-clean-BF16.gguf";
 
 using Clock = std::chrono::steady_clock;
 double now_ms() {

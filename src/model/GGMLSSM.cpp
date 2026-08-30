@@ -106,8 +106,9 @@ void GGMLSSMLayer(const GGUFBlockWeights &w, const GGUFModelConfig &cfg, GGMLSSM
     const std::vector<float> dt_bias = load_tensor(w.ssm_dt_bias); // [n_group]
     const std::vector<float> conv1d_w =
         load_tensor(w.ssm_conv1d); // [conv_dim, conv_kernel] 实际 [conv_kernel, conv_dim] 列主序
-    const std::vector<float> ssm_norm = load_tensor(w.ssm_norm); // [d_inner] 即 [n_group*d_state]
-    const std::vector<float> a_norm = load_tensor(w.attn_norm);  // [hidden]
+    const std::vector<float> ssm_norm =
+        load_tensor(w.ssm_norm); // [d_state] 共享 gamma（跨 head 广播）
+    const std::vector<float> a_norm = load_tensor(w.attn_norm);           // [hidden]
     const std::vector<float> p_norm = load_tensor(w.post_attention_norm); // [hidden]
     const std::vector<float> f_gate = load_tensor(w.ffn_gate);            // [ffn_hidden, hidden]
     const std::vector<float> f_up = load_tensor(w.ffn_up);
@@ -186,10 +187,12 @@ void GGMLSSMLayer(const GGUFBlockWeights &w, const GGUFModelConfig &cfg, GGMLSSM
 
     // 6. gated norm：out = RMSNorm(o, γ_ssm_norm) ⊙ SiLU(z)，按 head 维对齐
     //    o 布局 [n_group][d_state]，z 布局 [n_group][d_state]（z 为 d_inner = n_group×d_state）
+    //    ⚠️ ssm_norm 是 [d_state] 的共享 gamma（llama.cpp: { head_v_dim }），对所有 head 广播，
+    //       不能按 [n_group][d_state] 索引（h>=1 会越界读堆内存 → 发散/非确定）。
     for (int h = 0; h < n_group; ++h) {
         const float *o_h = o.data() + static_cast<std::size_t>(h) * ds;
         const float *z_h = z.data() + static_cast<std::size_t>(h) * ds;
-        const float *g = ssm_norm.data() + static_cast<std::size_t>(h) * ds;
+        const float *g = ssm_norm.data(); // 共享 gamma [d_state]，跨 head 广播
         std::vector<float> rms(ds);
         GGMLRmsNorm(o_h, g, rms.data(), d_state, cfg.rms_eps);
         for (int d = 0; d < d_state; ++d)

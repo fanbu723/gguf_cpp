@@ -21,7 +21,7 @@
 #include "GGUFModelWeights.hpp"
 #include "GGUFTokenizer.hpp"
 
-std::string model_path = "/home/dongfan/llm/unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-BF16.gguf";
+std::string model_path = "/home/dongfan/llm/Qwen3.5-0.8B-clean-BF16.gguf";
 
 int main() {
     GGUFModel model;

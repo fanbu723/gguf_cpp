@@ -77,4 +77,8 @@ struct GGUFTokenizer {
   private:
     std::unordered_map<std::string, std::int32_t> token_to_id_; // token 文本 → id
     std::unordered_map<std::string, int> ranks_;                // "a b" → merge 排名
+    std::vector<std::string> special_tokens_; // 特殊 token（type 2/3/4），按长度降序（长优先匹配）
+
+    // 对一段普通文本做字节级 BPE 编码并追加到 ids（encode 内部使用）
+    void append_encode_chunk(std::vector<std::int32_t> &ids, const std::string &chunk) const;
 };
