@@ -14,6 +14,7 @@
 - [构建与运行](#构建与运行)
 - [实测验证](#实测验证)
 - [性能测试](#性能测试)
+- [后续开发流程](#后续开发流程)
 - [关键认知与踩坑](#关键认知与踩坑)
 - [附录：GGUF 格式规范](#附录gguf-格式规范)
 
@@ -186,6 +187,155 @@
 **瓶颈分析**：全模型前向每次**重新反量化所有权重**（BF16→float，18 个 SSM 层 + 6 个 Attention 层），且 logits 逐元素反量化 embedding（vocab×hidden ≈ 2.5 亿次）。这是纯教学实现的代价。
 
 **优化方向**（后续可按需）：权重反量化缓存（算一次复用）、logits 批量反量化 + SIMD、预填充并行化、KV/SSM 状态增量复用。
+
+---
+
+## 后续开发流程
+
+六阶段链路已全部打通，接下来的主线是 **性能 → 并行（CPU 多核 / GPU）→ 扩展**。延续项目「零依赖、可读性优先、模块追加」的原则：每个新能力都以独立算子 / 模块形式追加，不侵入核心路径；每步合入前先过单元测试 + 与 llama.cpp / numpy 参考的交叉验证。
+
+### 路线图总览
+
+| 阶段 | 主题 | 目标 | 状态 |
+| :-: | :--- | :--- | :---: |
+| ⑦ | 单核性能优化 | 从 ~0.64 tok/s 提升一个量级（反量化缓存 / SIMD） | 🔄 进行中 |
+| ⑧ | 多核 / 多 CPU 并行 | 算子线程池 + 多头并行，吃满单机多核 | ⬜ 未开始 |
+| ⑨ | GPU / CUDA 算子开发 | CUDA 可选后端：算子 → Attention/SSM → 全模型 GPU 化 | ⬜ 未开始 |
+| ⑩ | 扩展与工程化 | 更多量化类型 / 模型架构 / 分布式（按需） | ⬜ 未开始 |
+
+### 阶段 ⑦：单核性能优化 🔄
+
+> 现状瓶颈（见「性能测试」）：每次前向**重新反量化全部权重**，logits 逐元素反量化 embedding（约 2.5 亿次）。这是纯教学实现的代价，也是当前收益最大的优化点。
+
+- [ ] **权重反量化缓存**：首次访问后缓存 float 版本，后续前向复用（以内存换速度，需评估模型体积翻倍的成本）
+- [ ] **logits 批量反量化 + SIMD**：embedding 投影从逐元素 `GGMLDequantizeOne` 改为批量反量化 + 向量化点积（AVX2 / NEON）
+- [ ] **KV / SSM 状态增量复用**：预填充阶段避免重复计算已缓存 token 的状态
+- [ ] **预填充并行化**：prompt 多 token 的层内计算可流水
+- 验收：`./build-release/bench` 吞吐显著提升；`ctest` 全过；与 llama.cpp 逐 token logits 仍一致
+
+### 阶段 ⑧：多核 / 多 CPU 并行 ⬜
+
+> 自回归生成**逐 token 串行**、无法并行，能并行的是「单步前向内部」。算子的并行维度天然干净（见各模块注释），改动集中在算子层，不碰加载 / 分词 / 采样 / 生成骨架。
+
+- [ ] **算子级线程池**：`GGMLGemmVec` / `GGMLGemm` 按行分区、`GGMLDequantize` 按元素分区交给 `std::thread`（参考 llama.cpp `ggml_set_n_threads` 思路）
+- [ ] **多头注意力并行**：`GGMLAttentionGQA` 的 `n_head` 循环各头完全独立，直接分线程；KV cache 按头写入天然无竞争
+- [ ] **SIMD 配合**：gemv / 反量化是内存带宽受限，纯多线程收益有限，需 AVX2 / NEON 先榨干单核吞吐
+- [ ] **生成骨架保持串行**：`GGMLGenerate` 不动，仅加速每次 `GGMLForward` 内部
+- 验收：多核下 `bench` 吞吐接近线性扩展；`ctest` 全过；生成结果与单线程逐 token 一致
+
+### 阶段 ⑨：GPU / CUDA 算子开发 ⬜
+
+> CUDA 是**可选的并行后端**，不是替换 CPU 路径。以 `GGUF_CUDA=ON` 编译开关接入，默认 `OFF` 时零依赖、纯 CPU 路径原样可用。延续「模块追加、可读性优先」：每个 kernel 短小、注释清楚，**先求正确（与 CPU 逐元素对照）再优化性能**。
+
+**架构决策**
+
+- 构建：`find_package(CUDAToolkit)`，`.cu` 源文件由 nvcc 编译、与 g++ 链接；新增 `ggml_cuda` 静态库 + `GGMLCuda.hpp`（设备探测、`cudaGetLastError` 错误封装、内存助手）
+- 分派：在 `GGMLOps` / `GGMLDequantize` 等接口旁提供 CUDA 实现，调用点按 `GGUF_CUDA` 宏分派，CPU 实现保留
+- 权重搬运：`mmap` 映射的是 host 只读页，需 `cudaMalloc` + `cudaMemcpyAsync` 整份搬入显存；BF16 直接在 kernel 内反量化，避免显存翻倍
+
+**CUDA 算子开发流程**
+
+- [ ] **第 0 步 · 环境与骨架**：CMake 接入 CUDA、设备探测与错误检查宏、空 kernel 跑通 host↔device 往返
+- [ ] **第 1 步 · 张量搬运层**：`cudaMalloc` / `cudaMemcpy` / `cudaMemcpyAsync` 助手；权重整体搬入显存；保持 GGUF 列主序布局约定，kernel 不重排
+- [ ] **第 2 步 · 基础算子 kernel**：反量化（BF16 / Q4_0 / Q8_0 → float）、gemv / gemm（按行分块、fp32 累加）、rmsnorm / softmax / rope——每个 kernel 回拷结果与 CPU 版逐元素对照
+- [ ] **第 3 步 · Attention / KV cache GPU 化**：KV cache 分配在显存，GQA 每头一个 block（score → softmax → 加权 V），RoPE 与 QK 拆分并入 kernel
+- [ ] **第 4 步 · SSM / Delta Net kernel**：conv1d、状态递推 `S' = φ·S + β·k⊗(v − φ·Sᵀk)`、gated norm；S[16][128][128] 常驻显存
+- [ ] **第 5 步 · 全模型前向 GPU 化**：24 层逐层在 GPU 内完成，host 仅做 launch 编排，每 token 只回拷 logits；`GGMLGenerate` 骨架不变，仅 `GGMLForward` 换 GPU 版，KV / SSM 状态常驻显存
+- [ ] **第 6 步 · 采样器 GPU 化**（可选）：top-k / top-p 在 GPU 归约，只回传最终 token id，消除每步 host↔device 往返
+- [ ] **第 7 步 · 性能优化**：算子融合（QKV 联合投影、反量化并入 gemm）、`cudaMemcpyAsync` + 多 stream 流水、CUDA Graph 捕获自回归单步减少 launch 开销
+- [ ] **第 8 步 · 多 GPU**（可选、长期）：权重按行切分到多卡，kernel 分段计算 + 简易 all-reduce（多 stream 或 NCCL）
+- 验收：每个 kernel 回拷与 CPU 版 / llama.cpp / numpy 参考逐元素一致（误差 ≤0.05 浮点级）；`ctest` 全过（无 GPU 时跳过 CUDA 单测）；`bench` 对比 CPU 的吞吐与显存占用
+
+**注意事项（提前避坑）**
+
+- 自回归每步的 host↔device 同步点是吞吐杀手，优先做第 6 步（logits / 采样回拷最小化）
+- GPU fp32 累加顺序与 CPU 不同 → 存在浮点级差异，对照阈值沿用现有 ≤0.05 标准
+- nvcc 对部分 C++20 特性与 clang-format 规则支持不一致，`.cu` 需单独适配编译警告策略
+
+### 阶段 ⑩：扩展与工程化 ⬜（按需）
+
+- [ ] 更多量化类型（Q4_K / Q6_K / Q8_0 的直接量化核，避免全量反量化）
+- [ ] 通用模型兼容层（从 qwen35 专用走向多架构分派）
+- [ ] **多进程 / 多机分布式**（可选、长期）：权重已走 `mmap` 只读映射，天然可多进程共享同一份文件；张量 / 流水线并行需引入跨进程同步（共享内存 / socket），与「极简」哲学冲突较大，仅在模型超单机内存时启用
+
+### 远期功能展望（想法库，按需取用）
+
+> 以下方向不属于主线 ⑦—⑩，按**价值 / 成本**排序，需要时以「模块追加」方式实现，不列入总览进度表。
+
+| 优先级 | 方向 | 可增加项 | 说明 |
+| :-: | :--- | :--- | :--- |
+| ★★★ | 直接量化推理 | Q4_0 / Q8_0 量化矩阵乘（不反量化） | 最大瓶颈：省掉全量反量化，吞吐量级提升（ggml 核心做法） |
+| ★★★ | 采样增强 | 重复 / 频率惩罚、min-p、typical、grammar / JSON 约束、logit bias | 提升生成质量，支持结构化输出 |
+| ★★★ | 批量推理 | batch 多 prompt / 多请求一次前向 | 多请求场景吞吐成倍提升，配合服务化 |
+| ★★☆ | 模型通用性 | 更多架构（LLaMA / Mistral / DeepSeek-MLA）、更多量化类型、embedding / rerank 模式 | 从 qwen35 专用走向通用 |
+| ★★☆ | 上下文扩展 | NTK-aware / YaRN 动态 RoPE、KV cache 量化 / 分页、前缀缓存 | 超长文本与长对话 |
+| ★★☆ | 加速技巧 | 投机解码（draft 小模型） | 单线程也能提速 |
+| ★★☆ | 服务化 | OpenAI 兼容 HTTP（/v1/chat · completions · embeddings）、多会话并发、流式 / 中断 | 可接 Chatbox / Open WebUI 等前端 |
+| ★☆☆ | 工程质量 | CI + 覆盖率、ASan / UBSan、性能回归基准 | 防回归、提稳定 |
+| ★☆☆ | 工具链 | HF→GGUF 转换 / 量化 CLI、模型下载 | 生态闭环 |
+| ★☆☆ | 教学可视化 | 注意力热图 / token 概率分布 | 呼应「可读性优先」 |
+
+**更多方向（按主题分组，均为可选）**
+
+**解码与生成策略**
+- Beam Search / 多样本生成：并行多条候选，稳定提升生成质量
+- 前瞻解码（Lookahead Decoding）：无 draft 模型的投机式加速（n-gram 并行验证）
+- 自适应采样：按生成困惑度自动调节温度 / top-p
+- 状态导出 / 断点续聊：KV + SSM 状态快照到文件，会话可保存、恢复、跨进程共享
+
+**模型能力**
+- LoRA Adapter 推理：加载低秩微调权重叠加，不动基座即可切换风格 / 领域
+- 多模型热切换：embedding + 生成双模型按需切换
+- 多模态输入：图像 patch embedding（模型标签即 `image-text-to-text`）
+- 逐层混合精度：敏感层 F32、其余 BF16，省内存保质量
+
+**交互体验**
+- TUI 终端界面：历史 / 快捷键 / 多面板（对话 + 状态 + 采样参数）
+- 系统提示词 + 角色预设：`/persona` 切换、`--system` 预设
+- 工具调用 / Function Calling：grammar 约束输出结构化参数，接 RAG / 计算 / 代码执行
+- 会话持久化：对话历史存 JSON，`/save` / `/load`
+- 连续批处理（Continuous Batching）：vLLM 式动态拼 batch，请求随时插入 / 退出
+
+**工程与诊断**
+- 内置 Profiler / FLOPS 统计：逐层耗时 breakdown + 理论峰值利用率，定位 memory-bound / compute-bound
+- Golden / 差分测试：参考输出回归 + 随机输入与 llama.cpp 批量对照
+- Fuzz 解析器：随机损坏 GGUF 喂给解析器测健壮性
+- 长上下文稳定性测试：万级 token 生成监控 KV / SSM 状态漂移
+- CLI 参数化：`--threads / --ctx / --batch / --top-k / --no-mmap`（当前模型路径仍硬编码）
+
+**部署形态**
+- WebAssembly / WebGPU 浏览器运行：零安装、随处跑，最契合「零依赖」哲学
+- 边缘设备：ARM NEON + 低内存模式 + block-wise 权重加载
+
+### 推荐投入顺序（性价比引导）
+
+> 方向很多，为避免「什么都想做」，这里给出按 **收益 / 成本** 排序的推荐路径（面向 AI 推理引擎 / AI Infra 岗位）。主线优先级：**⑦ → ⑧ → ⑨（有 GPU 时）→ ⑩**；功能方向按「远期功能展望」的 ★ 优先级取用。
+
+**推荐路径（按顺序执行）**
+
+1. **⑦ 单核性能优化 + SIMD**：反量化缓存 → logits 批量反量化 → AVX2 / NEON 向量化（先建立性能基线）
+2. **直接量化推理**（Q4_0 / Q8_0 量化矩阵乘）：最大瓶颈 + 面试高频，吞吐量级提升
+3. **⑧ 多核线程池**：算子行分区 + 多头并行（并行编程基础：线程池 / 原子 / 负载均衡）
+4. **Profiler / FLOPS 统计**（穿插）：定量讲清每步为何慢，性能面试加分
+5. **⑨ CUDA 算子**（有 GPU 时）：最大差异化，不阻塞主线
+6. **Golden / 差分测试 + CI**（贯穿）：与 llama.cpp 逐 token 一致的正确性背书
+
+**里程碑（阶段验收节点）**
+
+| 里程碑 | 完成标志 | 可写入简历的表述 |
+| :--- | :--- | :--- |
+| **M1 · 正确的引擎** | 与 llama.cpp 输出逐 token 一致（当前已基本达到） | 从零手写 GGUF 推理引擎，输出与 llama.cpp 逐 token 一致 |
+| **M2 · 高效的引擎** | SIMD + 直接量化 + 多核，吞吐提升一个量级 | 实现量化矩阵乘与 SIMD / 多线程并行，吞吐提升 X 倍 |
+| **M3 · 可服务的引擎** | 量化核 + CUDA（可选）+ OpenAI 兼容 HTTP | 支持 Q4_0 / Q8_0 量化推理与 OpenAI 兼容服务 |
+
+### 开发工作流（每次迭代）
+
+1. 在独立分支做改动，保持 `master` 始终可构建可跑
+2. 每加一个算子 / 模块，先补 `src/test/` 下对应单测（沿用现有「手算断言 + 性质断言」风格）
+3. 涉及数值正确性的改动，用 `tools/` 下 llama.cpp / numpy 参考做交叉验证
+4. 全量验收：`ctest --preset debug`（或 release）全绿 + `./build-release/bench` 记录性能基线
+5. CUDA 相关改动须在带 NVIDIA GPU 的机器上验证，单测做 `GGUF_CUDA` 条件编译；默认 `GGUF_CUDA=OFF` 保持纯 CPU、零依赖可回退
+6. 更新 README 对应阶段的状态标记（✅ / 🔄 / ⬜）
 
 ---
 
