@@ -3,10 +3,14 @@
 > 从零手写 GGUF 模型文件的**解析与推理**。C++20 + CMake，零第三方依赖。
 > 目标是逐步构建一个能加载 GGUF 模型并做自回归文本生成的**极简推理引擎**。
 
+> 📌 **未来篇见 [`FUTURE.md`](FUTURE.md)**：从教学引擎走向生产级 Runtime 的完整路线图
+> （内存规划 / 图优化 / TVM / CANN 国产硬件 / KTransformers 异构）。本文档记录现状，FUTURE 规划未来。
+
 ---
 
 ## 📋 目录
 
+- [后续发展路线图（FUTURE.md）](#后续发展路线图futuremd)
 - [项目目标](#项目目标)
 - [当前进度](#当前进度)
 - [下一步计划](#下一步计划)
@@ -53,12 +57,12 @@
 | 基础算子（gemv/gemm/softmax/RMSNorm/SwiGLU/RoPE/Attention/KV cache） | ✅（阶段⑤ 第 1 步） |
 | 纯 Attention 层前向（Q+gate 联合投影 / GQA / KV cache / 残差） | ✅（阶段⑤ 第 2 步） |
 | SSM 混合层前向（Gated Delta Net：conv1d / 状态递推 / gated norm） | ✅（阶段⑤ 第 3 步） |
-| 全模型前向（24 层混合 + output_norm + 共享 embedding logits） | ✅（阶段⑤ 第 4 步） |
+| 全模型前向（25 层混合 + output_norm + 共享 embedding logits） | ✅（阶段⑤ 第 4 步） |
 | 采样器（temperature / top-k / top-p / greedy） | ✅（阶段⑥ 第 1 步） |
 | 自回归生成循环（预填充 + 逐 token 解码） | ✅（阶段⑥ 第 2 步） |
 | Chat 多轮对话（Qwen 风格模板 + 历史管理） | ✅（阶段⑥ 第 3 步） |
 
-运行 `./build/main` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子、层前向（Attention + SSM）与全模型前向演示。
+运行 `./build/main [model.gguf]` 可打印元数据、张量表、类型验证、mmap 读取、反量化结果、分词器、权重加载、基础算子、层前向（Attention + SSM）与全模型前向演示（模型路径可用参数传入，缺省用内置默认路径）。
 
 ---
 
@@ -94,11 +98,11 @@
 
 ### 阶段 ④：模型权重加载 ✅
 
-- [x] `GGUFModelWeights`：按名称索引全部 320 个张量（`find`，零拷贝指向 mmap 区）
+- [x] `GGUFModelWeights`：按名称索引全部 335 个张量（`find`，零拷贝指向 mmap 区）
 - [x] `GGUFTensorView`：张量视图（dims/type/data）+ 反量化读取（`read_element` / `read_all`）
 - [x] `GGUFModelConfig`：解析 `qwen35.*` 配置（block / hidden / head / FFN / SSM / RoPE）
 - [x] `GGUFBlockWeights`：逐层权重组装，`is_attention()` / `is_ssm()` 区分两类块
-- [x] 实测：24 层（6 个纯 Attention 层 + 18 个 SSM 混合层），hidden=1024，共享 embedding（无 output.weight）
+- [x] 实测：25 层（7 个纯 Attention 层 + 18 个 SSM 混合层），hidden=1024，共享 embedding（无 output.weight）
 - [x] 单元测试 `test_model_weights`（不依赖模型，手建假模型验证索引/配置/组装/读取）
 
 ### 阶段 ⑤：Transformer 计算 ✅
@@ -112,7 +116,7 @@
 - [x] `GGMLAttention`：KV cache + GQA 分组注意力（自回归场景）
 - [x] 单元测试 `test_model_ops`（不依赖模型，手算/性质断言验证全部算子）
 
-> 发现：该 BF16 模型 FFN 权重含约 0.3% 的 BF16 NaN（指数全 1、尾数非 0），属模型文件本身数据，非解析错误；正常前向会产生 NaN 输出。
+> 注：早期曾误判「模型 FFN 权重含约 0.3% BF16 NaN」，后经 llama.cpp / numpy 独立交叉验证确认**模型文件完全干净**——那是解析器数据区对齐与反量化早期 bug 造成的伪 NaN，详见「关键认知与踩坑」三个重要修复。
 
 **第 2 步：纯 Attention 层前向 ✅**
 
@@ -131,10 +135,10 @@
 
 **第 4 步：全模型前向 ✅**
 
-- [x] `GGMLForward`：token_embd → 24 层混合循环（`is_ssm()` / `is_attention()` 分发）→ output_norm → 共享 embedding 投影得 logits
+- [x] `GGMLForward`：token_embd → 25 层混合循环（`is_ssm()` / `is_attention()` 分发）→ output_norm → 共享 embedding 投影得 logits
 - [x] `GGMLModelState`：每层各一份 KV cache / SSM 状态，跨 token 持久（自回归解码准备）
 - [x] 单元测试 `test_forward`（2 层假模型：logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
-- [x] 真实模型：完整 24 层前向 → logits[248320]，与 llama.cpp 逐 token 对照一致（误差 ≤0.05）
+- [x] 真实模型：完整 25 层前向 → logits[248320]，与 llama.cpp 逐 token 对照一致（误差 ≤0.05）
 
 ### 阶段 ⑥：生成引擎 🔄 进行中
 
@@ -178,13 +182,13 @@
 | 权重索引 | 0.1 ms |
 | 单层 SSM 前向（含反量化） | 47.0 ms |
 | 单层 Attention 前向（含反量化） | 39.2 ms |
-| 全模型前向（24 层 + logits） | 1.56 s / token |
+| 全模型前向（25 层 + logits） | 1.56 s / token |
 | 吞吐 | ~0.64 tokens/s |
 | 常驻内存（VmRSS） | 1688 MB |
 
 > 注意：Debug 构建无优化，前向慢约 3~4 倍（~5.8 s/token）。跑推理/基准请用 Release 构建：`cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release && cmake --build build-release -j`。
 
-**瓶颈分析**：全模型前向每次**重新反量化所有权重**（BF16→float，18 个 SSM 层 + 6 个 Attention 层），且 logits 逐元素反量化 embedding（vocab×hidden ≈ 2.5 亿次）。这是纯教学实现的代价。
+**瓶颈分析**：全模型前向每次**重新反量化所有权重**（BF16→float，18 个 SSM 层 + 7 个 Attention 层），且 logits 逐元素反量化 embedding（vocab×hidden ≈ 2.5 亿次）。这是纯教学实现的代价。
 
 **优化方向**（后续可按需）：权重反量化缓存（算一次复用）、logits 批量反量化 + SIMD、预填充并行化、KV/SSM 状态增量复用。
 
@@ -193,6 +197,10 @@
 ## 后续开发流程
 
 六阶段链路已全部打通，接下来的主线是 **性能 → 并行（CPU 多核 / GPU）→ 扩展**。延续项目「零依赖、可读性优先、模块追加」的原则：每个新能力都以独立算子 / 模块形式追加，不侵入核心路径；每步合入前先过单元测试 + 与 llama.cpp / numpy 参考的交叉验证。
+
+> 🧭 **面向个人发展与职业（AI Infra / 国产硬件 Runtime）的完整路线图见 [`FUTURE.md`](FUTURE.md)**：
+> 它把本节的 ⑦—⑩ 阶段重新编排为「性能基线 → 内存规划 → 图优化 → IR/编译 → 执行与后端 → 生产化」六阶段，
+> 并逐阶段映射到 ONNX Runtime 内存规划器、TVM、CANN Runtime、KTransformers 四大学习主线。
 
 ### 路线图总览
 
@@ -240,7 +248,7 @@
 - [ ] **第 2 步 · 基础算子 kernel**：反量化（BF16 / Q4_0 / Q8_0 → float）、gemv / gemm（按行分块、fp32 累加）、rmsnorm / softmax / rope——每个 kernel 回拷结果与 CPU 版逐元素对照
 - [ ] **第 3 步 · Attention / KV cache GPU 化**：KV cache 分配在显存，GQA 每头一个 block（score → softmax → 加权 V），RoPE 与 QK 拆分并入 kernel
 - [ ] **第 4 步 · SSM / Delta Net kernel**：conv1d、状态递推 `S' = φ·S + β·k⊗(v − φ·Sᵀk)`、gated norm；S[16][128][128] 常驻显存
-- [ ] **第 5 步 · 全模型前向 GPU 化**：24 层逐层在 GPU 内完成，host 仅做 launch 编排，每 token 只回拷 logits；`GGMLGenerate` 骨架不变，仅 `GGMLForward` 换 GPU 版，KV / SSM 状态常驻显存
+- [ ] **第 5 步 · 全模型前向 GPU 化**：25 层逐层在 GPU 内完成，host 仅做 launch 编排，每 token 只回拷 logits；`GGMLGenerate` 骨架不变，仅 `GGMLForward` 换 GPU 版，KV / SSM 状态常驻显存
 - [ ] **第 6 步 · 采样器 GPU 化**（可选）：top-k / top-p 在 GPU 归约，只回传最终 token id，消除每步 host↔device 往返
 - [ ] **第 7 步 · 性能优化**：算子融合（QKV 联合投影、反量化并入 gemm）、`cudaMemcpyAsync` + 多 stream 流水、CUDA Graph 捕获自回归单步减少 launch 开销
 - [ ] **第 8 步 · 多 GPU**（可选、长期）：权重按行切分到多卡，kernel 分段计算 + 简易 all-reduce（多 stream 或 NCCL）
@@ -301,7 +309,7 @@
 - Golden / 差分测试：参考输出回归 + 随机输入与 llama.cpp 批量对照
 - Fuzz 解析器：随机损坏 GGUF 喂给解析器测健壮性
 - 长上下文稳定性测试：万级 token 生成监控 KV / SSM 状态漂移
-- CLI 参数化：`--threads / --ctx / --batch / --top-k / --no-mmap`（当前模型路径仍硬编码）
+- CLI 参数化：`--threads / --ctx / --batch / --top-k / --no-mmap`（模型路径已支持命令行传入，其余参数待补充）
 
 **部署形态**
 - WebAssembly / WebGPU 浏览器运行：零安装、随处跑，最契合「零依赖」哲学
@@ -354,7 +362,7 @@
 - **特殊 token（如 `<|im_start|>`、`<|im_end|>`）在词表里是单一 token（type 2/3/4），encode 必须在 BPE 之前整体匹配并映射为单一 id**，否则会被字节 BPE 拆散成多个子 token（本项目已修复）
 
 **qwen35 架构（SSM + Attention 混合）**
-- 24 层：每 4 层一个纯 Attention 层（blk.3/7/11/15/19/23），其余 18 层为 SSM 混合层；共享 embedding
+- 25 层：每 4 层一个纯 Attention 层（如 blk.3/7/11/15/19/23…，共 7 个），其余 18 层为 SSM 混合层；共享 embedding
 - 纯 Attention 层的 `attn_q` 是**联合 Q+gate 投影**：输出 `2×head_dim×n_head`，**按 head 交错**存储（每 head 的 `2×head_dim` 块内前半 Q、后半 gate，sigmoid 后相乘）；`head_dim=key_length=256`
 - 纯文本下 IMROPE 退化为标准 NEOX RoPE（旋转前 n_rot 维）
 - SSM 层是 **Gated Delta Net**：`S' = φ·S + β·k⊗(v − φ·Sᵀk)`，`o = Sᵀq/√d_state`；`ssm_norm` 是 `[d_state]` 的**共享 gamma**（跨 head 广播）；conv1d 无 bias、q/k 用 `max(‖x‖,ε)` L2 归一化
@@ -379,6 +387,7 @@ gguf_cpp/
 ├── CMakeLists.txt              # 顶层构建（子目录聚合 + main / chat 可执行）
 ├── CMakePresets.json           # 构建预设（debug / release 一键配置）
 ├── README.md                   # 本文档
+├── FUTURE.md                   # 后续发展路线图（从教学引擎走向生产级 Runtime）
 ├── include/core/
 │   ├── GGUFLoader.hpp          # 全部公共类型 + GGUFLoader 接口
 │   ├── GGMLType.hpp            # GGML 类型描述（type_size / block_size）
@@ -443,7 +452,11 @@ gguf_cpp/
 │   └── README.md               # 工具用法与依赖说明
 ├── scripts/
 │   └── chat.sh                  # 交互式对话启动脚本（Release 预设自动构建后运行）
-├── doc/architecture.md         # 目标架构设计
+├── doc/
+│   ├── architecture.md         # 目标架构设计
+│   ├── p0-design.md            # P0 性能基线设计蓝图
+│   ├── roadmap-design.md       # 全阶段（P1–P5）设计蓝图
+│   └── gguf-format.json        # GGUF 文件格式完整描述（JSON 规范参考）
 ├── build/                      # Debug 构建产物（git 忽略）
 └── build-release/              # Release 构建产物（git 忽略）
 ```
@@ -480,7 +493,7 @@ ctest --test-dir build --output-on-failure
 # 调试/交叉验证工具（NaN 扫描、numpy 参考、logits A/B 对照等，见 tools/README.md）
 ```
 
-> `chat` 支持命令行传模型路径与最大生成 token 数；`main` / `bench` 的模型路径硬编码在源码顶部（默认 `~/llm/Qwen3.5-0.8B-clean-BF16.gguf`），可按需修改。
+> `chat` 支持命令行传模型路径与最大生成 token 数；`main` 也支持 `./build/main [model.gguf]` 传模型路径（缺省用源码顶部默认 `~/llm/Qwen3.5-0.8B-clean-BF16.gguf`）；`bench` 的模型路径仍硬编码在源码顶部，可按需修改。
 
 代码风格：clang-format（规则见 `.clang-format`），VS Code 已配置保存时自动格式化。
 
@@ -488,29 +501,29 @@ ctest --test-dir build --output-on-failure
 
 ## 实测验证
 
-对真实模型 `Qwen3.5-0.8B-BF16.gguf`（1.5 GB）运行结果：
+对真实模型 `Qwen3.5-0.8B-BF16.gguf` / `Qwen3.5-0.8B-clean-BF16.gguf`（1.5 GB，25 层，两文件张量数据一致）运行结果：
 
 ```text
 ✅ 加载成功
-  魔数: 0x46554747  版本: 3  元数据 KV: 42  张量: 320
+  魔数: 0x46554747  版本: 3  元数据 KV: 42  张量: 335
 
 [STRING] general.architecture = "qwen35"
-[UINT32] qwen35.block_count = 24
+[UINT32] qwen35.block_count = 25
 [ARRAY]  general.tags = [ STRING x1 ] ("image-text-to-text")   ← ARRAY 递归 ✓
 ...
 token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 ...
-数据区偏移: 10961696  总大小: 1505783040 字节 (1436.00 MiB)
+数据区偏移: 10962496  总大小: 1546700032 字节 (1475.05 MiB)
 ```
 
 **校验点**：
-- ✅ 数据区偏移（32 字节对齐后）+ 数据区大小 = 文件总大小（`10961696 + 1505783040 = 1516744736`）精确吻合
+- ✅ 数据区偏移（32 字节对齐后）+ 数据区大小 = 文件总大小（`10962496 + 1546700032 = 1557662528`）精确吻合
 - ✅ 元数据 ARRAY 递归解析正确（`general.tags = [STRING x1]`）
 - ✅ 张量 `element_count()` 与维度乘积一致（`1024 × 248320 = 254279680`）
 
 **GGML 类型系统验证**：
 - ✅ 类型反推（从文件布局实测）：`type=0(F32) 4字节/元素`、`type=30(BF16) 2字节/元素`
-- ✅ 张量数据累加 `1505783040` = 数据区大小（32 对齐后无填充），完全吻合
+- ✅ 张量数据累加 `1546700032` = 数据区大小（32 对齐后无填充），完全吻合
 - ✅ 关键认知：GGUF 张量 `offset` 是**相对数据区起点**的偏移（而非文件头）
 
 **反量化验证**：
@@ -524,7 +537,7 @@ token_embd.weight  dims=[1024, 248320]  type=30  offset=0  elements=254279680
 - ✅ SSM 层单测：delta net 手算一致 + 层结构 / 确定性 / 状态累积 / conv 推进
 - ✅ 全模型前向单测 6 项（logits 维度 / 有限 / 确定性 / token 区分 / 状态累积）
 - ✅ 生成引擎单测：sampler 各模式 + 生成循环（数量 / 确定性 / eos 停止）
-- ✅ 真实模型完整 24 层前向 → logits[248320]（有限，与 llama.cpp 对照逐项一致）
+- ✅ 真实模型完整 25 层前向 → logits[248320]（有限，与 llama.cpp 对照逐项一致）
 - ✅ 真实模型 `blk.3`（纯 Attention 层）与 `blk.0`（SSM 层）前向与独立 numpy 参考实现逐值一致
 - ✅ 端到端生成：`echo "Hello, world!" | ./build-release/chat <model> 64` 输出连贯思考式回复（与 llama.cpp 输出对照一致）
 

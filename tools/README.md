@@ -9,7 +9,7 @@
 | :--- | :--- | :--- |
 | `check_nan.cpp` | 用本项目解析器扫描 GGUF 全张量 NaN/Inf（验证解析/反量化正确性） | 本项目 `gguf_model` 库 |
 | `scan_nan_ggufpy.py` | 用 llama.cpp 的 gguf-py 独立读取并按 BF16/F16/F32 正确解释后统计 NaN/Inf（交叉验证模型文件干净） | llama.cpp 的 gguf-py |
-| `ref_full.py` | 独立 numpy 实现 Qwen3.5 全 24 层前向，逐层 dump 输出 + 最终 logits top-10（定位分歧层/布局 bug） | llama.cpp 的 gguf-py + numpy |
+| `ref_full.py` | 独立 numpy 实现 Qwen3.5 全 25 层前向，逐层 dump 输出 + 最终 logits top-10（定位分歧层/布局 bug） | llama.cpp 的 gguf-py + numpy |
 | `gguf_logits.cpp` | 本项目前向对显式 token id 序列 dump top-k logits | 本项目 `gguf_model` 库 |
 | `llama_logits.cpp` | llama.cpp 前向对同一 token id 序列 dump top-k logits（A/B 对照） | llama.cpp 头文件 + libllama |
 

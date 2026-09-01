@@ -1,0 +1,569 @@
+{
+    "format": "GGUF",
+    "version_supported": 3,
+    "byte_order": "little-endian",
+    "description": "GGUF 文件格式完整描述（依据本仓库 GGUFLoader.hpp / GGMLType.hpp / GGUFModelWeights 实现）",
+    "layout": [
+        {
+            "section": "① Header 文件头",
+            "fixed_size_bytes": 24,
+            "fields": [
+                {
+                    "name": "magic",
+                    "offset": 0,
+                    "type": "uint32_t",
+                    "size_bytes": 4,
+                    "value": "0x46554747",
+                    "ascii": "GGUF"
+                },
+                {
+                    "name": "version",
+                    "offset": 4,
+                    "type": "uint32_t",
+                    "size_bytes": 4,
+                    "value": 3
+                },
+                {
+                    "name": "tensor_count",
+                    "offset": 8,
+                    "type": "uint64_t",
+                    "size_bytes": 8,
+                    "description": "张量总数"
+                },
+                {
+                    "name": "metadata_kv_count",
+                    "offset": 16,
+                    "type": "uint64_t",
+                    "size_bytes": 8,
+                    "description": "元数据键值对数量"
+                }
+            ]
+        },
+        {
+            "section": "② Metadata KV 列表",
+            "repeat": "metadata_kv_count 次",
+            "entry": {
+                "key": {
+                    "type": "字符串：uint64_t 长度 + UTF-8 内容（无结束符）"
+                },
+                "value_type": {
+                    "type": "uint32_t",
+                    "enum": "GGUFValueType（见 value_types 节）"
+                },
+                "value": {
+                    "type": "变长，按 value_type 编码；ARRAY 可递归嵌套"
+                }
+            }
+        },
+        {
+            "section": "③ Tensor 信息表",
+            "repeat": "tensor_count 次",
+            "entry": [
+                {
+                    "name": "name",
+                    "type": "字符串（长度前缀，同 key 格式）"
+                },
+                {
+                    "name": "n_dimensions",
+                    "type": "uint32_t",
+                    "description": "维度数量"
+                },
+                {
+                    "name": "dimensions",
+                    "type": "uint64_t × n_dimensions",
+                    "description": "各维度大小"
+                },
+                {
+                    "name": "data_type",
+                    "type": "uint32_t",
+                    "enum": "GGMLType（见 ggml_types 节）"
+                },
+                {
+                    "name": "offset",
+                    "type": "uint64_t",
+                    "description": "张量数据在文件中的起始偏移（从文件头计）"
+                }
+            ]
+        },
+        {
+            "section": "④ Tensor Data 数据区",
+            "description": "所有张量原始数据按 offset 依次存放；长度 = ceil(元素数 / block_size) × type_size；数据可能未对齐，按字节偏移直接读取"
+        }
+    ],
+    "value_types": {
+        "enum_name": "GGUFValueType",
+        "description": "元数据值类型枚举（GGUF 规范 2.2 节）",
+        "values": [
+            {
+                "id": 0,
+                "name": "UINT8",
+                "size_bytes": 1
+            },
+            {
+                "id": 1,
+                "name": "INT8",
+                "size_bytes": 1
+            },
+            {
+                "id": 2,
+                "name": "UINT16",
+                "size_bytes": 2
+            },
+            {
+                "id": 3,
+                "name": "INT16",
+                "size_bytes": 2
+            },
+            {
+                "id": 4,
+                "name": "UINT32",
+                "size_bytes": 4
+            },
+            {
+                "id": 5,
+                "name": "INT32",
+                "size_bytes": 4
+            },
+            {
+                "id": 6,
+                "name": "FLOAT32",
+                "size_bytes": 4
+            },
+            {
+                "id": 7,
+                "name": "BOOL",
+                "size_bytes": 1,
+                "note": "0/1"
+            },
+            {
+                "id": 8,
+                "name": "STRING",
+                "note": "变长：uint64 长度 + UTF-8 内容"
+            },
+            {
+                "id": 9,
+                "name": "ARRAY",
+                "note": "uint32 元素类型 + uint64 元素个数 + 元素序列（可递归）"
+            },
+            {
+                "id": 10,
+                "name": "UINT64",
+                "size_bytes": 8
+            },
+            {
+                "id": 11,
+                "name": "INT64",
+                "size_bytes": 8
+            },
+            {
+                "id": 12,
+                "name": "FLOAT64",
+                "size_bytes": 8
+            }
+        ]
+    },
+    "ggml_types": {
+        "enum_name": "GGMLType",
+        "description": "张量 data_type 枚举（与 ggml.h 一致）；量化类型按 block 打包，非量化类型 block_size = 1",
+        "values": [
+            {
+                "id": 0,
+                "name": "F32",
+                "note": "非量化"
+            },
+            {
+                "id": 1,
+                "name": "F16",
+                "note": "非量化"
+            },
+            {
+                "id": 2,
+                "name": "Q4_0",
+                "note": "量化"
+            },
+            {
+                "id": 3,
+                "name": "Q4_1",
+                "note": "量化"
+            },
+            {
+                "id": 6,
+                "name": "Q5_0",
+                "note": "量化"
+            },
+            {
+                "id": 7,
+                "name": "Q5_1",
+                "note": "量化"
+            },
+            {
+                "id": 8,
+                "name": "Q8_0",
+                "note": "量化"
+            },
+            {
+                "id": 9,
+                "name": "Q8_1",
+                "note": "量化"
+            },
+            {
+                "id": 10,
+                "name": "Q2_K",
+                "note": "量化"
+            },
+            {
+                "id": 11,
+                "name": "Q3_K",
+                "note": "量化"
+            },
+            {
+                "id": 12,
+                "name": "Q4_K",
+                "note": "量化"
+            },
+            {
+                "id": 13,
+                "name": "Q5_K",
+                "note": "量化"
+            },
+            {
+                "id": 14,
+                "name": "Q6_K",
+                "note": "量化"
+            },
+            {
+                "id": 15,
+                "name": "Q8_K",
+                "note": "量化"
+            },
+            {
+                "id": 16,
+                "name": "I8",
+                "note": "整数"
+            },
+            {
+                "id": 17,
+                "name": "I16",
+                "note": "整数"
+            },
+            {
+                "id": 18,
+                "name": "I32",
+                "note": "整数"
+            },
+            {
+                "id": 19,
+                "name": "I64",
+                "note": "整数"
+            },
+            {
+                "id": 20,
+                "name": "F64",
+                "note": "非量化"
+            },
+            {
+                "id": 21,
+                "name": "BF16",
+                "note": "非量化"
+            },
+            {
+                "id": 22,
+                "name": "Q4_0_4_4",
+                "note": "量化"
+            },
+            {
+                "id": 23,
+                "name": "Q4_0_4_8",
+                "note": "量化"
+            },
+            {
+                "id": 24,
+                "name": "Q4_0_8_8",
+                "note": "量化"
+            },
+            {
+                "id": 25,
+                "name": "TQ1_0",
+                "note": "量化"
+            },
+            {
+                "id": 26,
+                "name": "TQ2_0",
+                "note": "量化"
+            },
+            {
+                "id": 27,
+                "name": "IQ2_XXS",
+                "note": "量化"
+            },
+            {
+                "id": 28,
+                "name": "IQ2_XS",
+                "note": "量化"
+            },
+            {
+                "id": 29,
+                "name": "IQ3_XXS",
+                "note": "量化"
+            },
+            {
+                "id": 30,
+                "name": "IQ1_S",
+                "note": "量化"
+            },
+            {
+                "id": 31,
+                "name": "IQ4_NL",
+                "note": "量化"
+            },
+            {
+                "id": 32,
+                "name": "IQ3_S",
+                "note": "量化"
+            },
+            {
+                "id": 33,
+                "name": "IQ2_S",
+                "note": "量化"
+            },
+            {
+                "id": 34,
+                "name": "IQ4_XS",
+                "note": "量化"
+            },
+            {
+                "id": 35,
+                "name": "I8_S",
+                "note": "整数"
+            },
+            {
+                "id": 36,
+                "name": "IQ3_NL",
+                "note": "量化"
+            },
+            {
+                "id": 37,
+                "name": "IQ4_XXS",
+                "note": "量化"
+            },
+            {
+                "id": 38,
+                "name": "IQ2_M",
+                "note": "量化"
+            }
+        ]
+    },
+    "metadata_keys_qwen35": {
+        "description": "Qwen3.5（架构名 qwen35）元数据键，本仓库 GGUFModelWeights 实际解析的字段",
+        "values": [
+            {
+                "key": "general.architecture",
+                "value": "qwen35",
+                "type": "STRING",
+                "meaning": "架构名"
+            },
+            {
+                "key": "qwen35.block_count",
+                "type": "UINT32",
+                "meaning": "Transformer 块总数"
+            },
+            {
+                "key": "qwen35.context_length",
+                "type": "UINT32",
+                "meaning": "上下文长度"
+            },
+            {
+                "key": "qwen35.embedding_length",
+                "type": "UINT32",
+                "meaning": "隐藏层维度（hidden）"
+            },
+            {
+                "key": "qwen35.feed_forward_length",
+                "type": "UINT32",
+                "meaning": "FFN 中间维度"
+            },
+            {
+                "key": "qwen35.attention.head_count",
+                "type": "UINT32",
+                "meaning": "Q 头数"
+            },
+            {
+                "key": "qwen35.attention.head_count_kv",
+                "type": "UINT32",
+                "meaning": "KV 头数（GQA）"
+            },
+            {
+                "key": "qwen35.attention.key_length",
+                "type": "UINT32",
+                "meaning": "每个 KV 头的 key 维度"
+            },
+            {
+                "key": "qwen35.attention.value_length",
+                "type": "UINT32",
+                "meaning": "每个 KV 头的 value 维度"
+            },
+            {
+                "key": "qwen35.attention.layer_norm_rms_epsilon",
+                "type": "FLOAT32",
+                "meaning": "RMSNorm epsilon"
+            },
+            {
+                "key": "qwen35.ssm.conv_kernel",
+                "type": "UINT32",
+                "meaning": "SSM 卷积核大小"
+            },
+            {
+                "key": "qwen35.ssm.state_size",
+                "type": "UINT32",
+                "meaning": "SSM 状态维度"
+            },
+            {
+                "key": "qwen35.ssm.group_count",
+                "type": "UINT32",
+                "meaning": "SSM 分组数"
+            },
+            {
+                "key": "qwen35.ssm.time_step_rank",
+                "type": "UINT32",
+                "meaning": "时间步投影维度"
+            },
+            {
+                "key": "qwen35.ssm.inner_size",
+                "type": "UINT32",
+                "meaning": "SSM 内部/输出维度"
+            },
+            {
+                "key": "qwen35.full_attention_interval",
+                "type": "UINT32",
+                "meaning": "每 N 层插入一个纯 Attention 层"
+            },
+            {
+                "key": "qwen35.rope.dimension_count",
+                "type": "UINT32",
+                "meaning": "参与旋转的维度数"
+            },
+            {
+                "key": "qwen35.rope.freq_base",
+                "type": "FLOAT32",
+                "meaning": "RoPE 基频"
+            }
+        ]
+    },
+    "tensor_naming": {
+        "description": "张量命名约定（本仓库 GGUFBlockWeights / GGUFModelWeights 使用）",
+        "global_tensors": [
+            {
+                "name": "token_embd.weight",
+                "meaning": "词嵌入"
+            },
+            {
+                "name": "output_norm.weight",
+                "meaning": "输出 RMSNorm"
+            }
+        ],
+        "per_block_common": [
+            {
+                "name": "blk.N.attn_norm.weight",
+                "meaning": "输入 RMSNorm"
+            },
+            {
+                "name": "blk.N.post_attention_norm.weight",
+                "meaning": "残差后 RMSNorm"
+            },
+            {
+                "name": "blk.N.ffn_down.weight",
+                "meaning": "FFN 下投影"
+            },
+            {
+                "name": "blk.N.ffn_gate.weight",
+                "meaning": "FFN 门控"
+            },
+            {
+                "name": "blk.N.ffn_up.weight",
+                "meaning": "FFN 上投影"
+            }
+        ],
+        "attention_layer": [
+            {
+                "name": "blk.N.attn_q.weight",
+                "meaning": "Q 投影"
+            },
+            {
+                "name": "blk.N.attn_k.weight",
+                "meaning": "K 投影"
+            },
+            {
+                "name": "blk.N.attn_v.weight",
+                "meaning": "V 投影"
+            },
+            {
+                "name": "blk.N.attn_output.weight",
+                "meaning": "输出投影"
+            },
+            {
+                "name": "blk.N.attn_q_norm.weight",
+                "meaning": "Q 归一化"
+            },
+            {
+                "name": "blk.N.attn_k_norm.weight",
+                "meaning": "K 归一化"
+            }
+        ],
+        "ssm_mixed_layer": [
+            {
+                "name": "blk.N.ssm_a",
+                "meaning": "SSM 状态矩阵"
+            },
+            {
+                "name": "blk.N.ssm_conv1d.weight",
+                "meaning": "输入卷积"
+            },
+            {
+                "name": "blk.N.ssm_dt.bias",
+                "meaning": "时间步偏置"
+            },
+            {
+                "name": "blk.N.ssm_alpha.weight",
+                "meaning": "时间步 alpha"
+            },
+            {
+                "name": "blk.N.ssm_beta.weight",
+                "meaning": "时间步 beta"
+            },
+            {
+                "name": "blk.N.ssm_norm.weight",
+                "meaning": "SSM 输出 RMSNorm"
+            },
+            {
+                "name": "blk.N.ssm_out.weight",
+                "meaning": "SSM 输出投影"
+            },
+            {
+                "name": "blk.N.attn_qkv.weight",
+                "meaning": "混合层 QKV 合并投影"
+            },
+            {
+                "name": "blk.N.attn_gate.weight",
+                "meaning": "混合层注意力门控"
+            }
+        ],
+        "block_kinds": [
+            {
+                "kind": "纯 Attention 层",
+                "criterion": "存在 attn_q.weight",
+                "example_layers": "本模型为 blk.3/7/11/15/19/23"
+            },
+            {
+                "kind": "SSM 混合层",
+                "criterion": "存在 ssm_a",
+                "example_layers": "本模型为其余各层"
+            }
+        ]
+    },
+    "tensor_data_formula": {
+        "description": "张量数据长度与总字节数计算",
+        "element_count": "n = prod(dimensions)",
+        "total_bytes": "ceil(n / block_size) × type_size",
+        "note": "block_size 与 type_size 由 GGMLType 决定：F32=4、F16/BF16=2、Q4_0=18 等；非量化类型 block_size = 1"
+    }
+}
